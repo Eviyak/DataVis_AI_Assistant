@@ -36,58 +36,52 @@ def fig_to_bytes(fig):
     buf.seek(0)
     return buf
 
-pdf_buffer = generate_pdf_report(df, data_info, stats_info, ai_info, hist_buf, boxplot_buf)
+
+def generate_pdf_report(df, data_info, stats_info, ai_info, hist_img_buf, boxplot_img_buf):
     pdf = FPDF()
-    # Добавляем шрифты DejaVu (обычный и жирный)
+    # Добавляем шрифты
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
 
     pdf.add_page()
 
-    # Заголовок по центру жирным
+    # Заголовок
     pdf.set_font('DejaVu', 'B', 20)
-    pdf.cell(0, 15, "Отчет", ln=True, align='C')
+    pdf.cell(0, 15, 'Отчёт', align='C', ln=True)
+    pdf.ln(10)
 
-    # Заголовок "Данные"
+    # Раздел Данные
+    pdf.set_font('DejaVu', 'B', 16)
+    pdf.cell(0, 10, 'Данные', ln=True)
+    pdf.set_font('DejaVu', '', 12)
+    pdf.multi_cell(0, 8, data_info)
     pdf.ln(5)
+
+    # Раздел Статистика
     pdf.set_font('DejaVu', 'B', 16)
-    pdf.cell(0, 10, "Данные", ln=True)
-
+    pdf.cell(0, 10, 'Статистика', ln=True)
     pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 10, data_info)
+    pdf.multi_cell(0, 8, stats_info)
+    pdf.ln(5)
 
-    # Заголовок "Статистика"
-    pdf.ln(3)
+    # Вставка графиков
+    if hist_img_buf is not None:
+        pdf.image(hist_img_buf, x=10, w=90)
+    if boxplot_img_buf is not None:
+        pdf.image(boxplot_img_buf, x=110, w=90)
+    pdf.ln(5)
+
+    # Раздел AI-модель
     pdf.set_font('DejaVu', 'B', 16)
-    pdf.cell(0, 10, "Статистика", ln=True)
-
+    pdf.cell(0, 10, 'AI-модель', ln=True)
     pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 10, stats_info)
+    pdf.multi_cell(0, 8, ai_info)
 
-    # Вставка гистограммы
-    if hist_img_buf:
-        pdf.ln(2)
-        pdf.image(hist_img_buf, x=pdf.get_x(), y=pdf.get_y(), w=90)
-    
-    # Вставка боксплота
-    if boxplot_img_buf:
-        pdf.ln(2)
-        pdf.image(boxplot_img_buf, x=pdf.get_x() + 100, y=pdf.get_y() - 40, w=90)
-    
-    pdf.ln(45)  # Отступ снизу под графики
-
-    # Заголовок "AI-модель"
-    pdf.set_font('DejaVu', 'B', 16)
-    pdf.cell(0, 10, "AI-модель", ln=True)
-
-    pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 10, ai_info)
-
-    # Вывод PDF в память
-    pdf_buffer = io.BytesIO()
-    pdf.output(pdf_buffer)
-    pdf_buffer.seek(0)
-    return pdf_buffer
+    # Вывод в буфер
+    buffer = io.BytesIO()
+    pdf.output(buffer)
+    buffer.seek(0)
+    return buffer
 
 uploaded_file = st.file_uploader("Загрузите файл", type=["csv", "xlsx", "xls", "json"])
 
