@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 import json
 import io
 from io import BytesIO
+import tempfile
 from fpdf import FPDF
-import tempfile  # <-- вот сюда добавь
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
@@ -58,7 +58,7 @@ def generate_pdf_report(data_info, stats_info, ai_info, hist_img_buf=None, boxpl
     pdf.multi_cell(0, 8, stats_info)
     pdf.ln(5)
 
-    # Сохраняем буферы во временные файлы и вставляем
+    # Сохраняем графики во временные файлы для вставки
     if hist_img_buf:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_hist:
             tmp_hist.write(hist_img_buf.getbuffer())
@@ -78,18 +78,17 @@ def generate_pdf_report(data_info, stats_info, ai_info, hist_img_buf=None, boxpl
     pdf.set_font('DejaVu', '', 12)
     pdf.multi_cell(0, 8, ai_info if ai_info else "Информация отсутствует")
 
-    buffer = io.BytesIO()
-    pdf.output(buffer)
-    buffer.seek(0)
-    return buffer
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    return io.BytesIO(pdf_bytes)
 
+# ==== Основной интерфейс ====
 
 uploaded_file = st.file_uploader("Загрузите файл", type=["csv", "xlsx", "xls", "json"])
 
 ai_report_text = None
 hist_buf = None
 boxplot_buf = None
-selected = None  # Инициализируем выбранную колонку
+selected = None
 
 if uploaded_file:
     df = load_data(uploaded_file)
@@ -118,22 +117,20 @@ if uploaded_file:
                 ax2.set_title("Boxplot")
                 st.pyplot(fig)
 
-                # Отдельные графики для отчёта
-                fig_hist, ax_hist = plt.subplots(figsize=(6,4))
+                fig_hist, ax_hist = plt.subplots(figsize=(6, 4))
                 sns.histplot(df[selected], ax=ax_hist, kde=True)
                 ax_hist.set_title("Распределение")
                 hist_buf = fig_to_bytes(fig_hist)
 
-                fig_box, ax_box = plt.subplots(figsize=(6,4))
+                fig_box, ax_box = plt.subplots(figsize=(6, 4))
                 sns.boxplot(x=df[selected], ax=ax_box)
                 ax_box.set_title("Boxplot")
                 boxplot_buf = fig_to_bytes(fig_box)
             else:
-                st.warning("В данных нет числовых колонок для визуализации.")
+                st.warning("Нет числовых колонок для визуализации.")
 
         with tab3:
             st.subheader("🧠 Обучение модели (RandomForestClassifier)")
-
             target_column = st.selectbox("Выберите целевую переменную (классификация)", df.columns)
             features = [col for col in df.select_dtypes(include='number').columns if col != target_column]
 
@@ -149,7 +146,7 @@ if uploaded_file:
                     ai_report_text = classification_report(y_test, y_pred, zero_division=0)
                     st.code(ai_report_text, language='text')
                 except Exception as e:
-                    st.error(f"Ошибка обучения: {e}")
+                    st.error(f"Ошибка обучения модели: {e}")
             else:
                 st.warning("Недостаточно числовых признаков для обучения модели.")
 
@@ -162,6 +159,7 @@ if uploaded_file:
 Основные статистики по числовым данным:
 {df.describe().to_string()}
 """
+
             if st.button("📥 Скачать отчёт в PDF"):
                 pdf_buffer = generate_pdf_report(data_info, stats_summary, ai_report_text, hist_buf, boxplot_buf)
                 st.download_button("📄 Скачать PDF", data=pdf_buffer, file_name="ai_data_report.pdf", mime="application/pdf")
