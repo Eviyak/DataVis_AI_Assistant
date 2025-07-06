@@ -36,54 +36,58 @@ def fig_to_bytes(fig):
     buf.seek(0)
     return buf
 
-def generate_pdf_report(df, stats_text, ai_report, hist_fig_buf=None, boxplot_fig_buf=None):
+def generate_pdf_report(df, data_info, stats_info, ai_info, hist_img_buf, boxplot_img_buf):
     pdf = FPDF()
-    pdf.add_font('DejaVu', '', os.path.join(os.path.dirname(__file__), 'DejaVuSans.ttf'), uni=True)
-    pdf.set_font('DejaVu', '', 16)
+    # Добавляем шрифты DejaVu (обычный и жирный)
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
 
-    # Первая страница с заголовком "Отчет"
     pdf.add_page()
-    pdf.set_xy(0, 50)
-    pdf.cell(210, 10, "Отчет", ln=True, align='C')
 
-    # Вторая страница - Данные
-    pdf.add_page()
-    pdf.set_font('DejaVu', 'B', 14)
+    # Заголовок по центру жирным
+    pdf.set_font('DejaVu', 'B', 20)
+    pdf.cell(0, 15, "Отчет", ln=True, align='C')
+
+    # Заголовок "Данные"
+    pdf.ln(5)
+    pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, "Данные", ln=True)
-    pdf.set_font('DejaVu', '', 12)
-    data_info = f"Файл содержит {df.shape[0]} строк и {df.shape[1]} колонок.\n\nТипы данных:\n{df.dtypes.to_string()}\n\nПропущенные значения:\n{df.isnull().sum().to_string()}"
-    pdf.multi_cell(0, 8, data_info)
 
-    # Третья страница - Статистика + графики
-    pdf.add_page()
-    pdf.set_font('DejaVu', 'B', 14)
+    pdf.set_font('DejaVu', '', 12)
+    pdf.multi_cell(0, 10, data_info)
+
+    # Заголовок "Статистика"
+    pdf.ln(3)
+    pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, "Статистика", ln=True)
+
     pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 8, stats_text)
+    pdf.multi_cell(0, 10, stats_info)
 
-    # Вставляем графики если они есть
-    y_pos = pdf.get_y() + 10
-    x_center = 10
-    img_w = 90  # ширина изображения
+    # Вставка гистограммы
+    if hist_img_buf:
+        pdf.ln(2)
+        pdf.image(hist_img_buf, x=pdf.get_x(), y=pdf.get_y(), w=90)
+    
+    # Вставка боксплота
+    if boxplot_img_buf:
+        pdf.ln(2)
+        pdf.image(boxplot_img_buf, x=pdf.get_x() + 100, y=pdf.get_y() - 40, w=90)
+    
+    pdf.ln(45)  # Отступ снизу под графики
 
-    if hist_fig_buf:
-        pdf.image(hist_fig_buf, x=x_center, y=y_pos, w=img_w)
-    if boxplot_fig_buf:
-        # Вторая картинка справа
-        pdf.image(boxplot_fig_buf, x=x_center + img_w + 10, y=y_pos, w=img_w)
-
-    # Четвёртая страница - AI модель
-    pdf.add_page()
-    pdf.set_font('DejaVu', 'B', 14)
+    # Заголовок "AI-модель"
+    pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, "AI-модель", ln=True)
-    pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 8, ai_report if ai_report else "Модель не обучалась.")
 
-    # Генерируем PDF в байтах и возвращаем буфер
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
-    buffer = io.BytesIO(pdf_bytes)
-    buffer.seek(0)
-    return buffer
+    pdf.set_font('DejaVu', '', 12)
+    pdf.multi_cell(0, 10, ai_info)
+
+    # Вывод PDF в память
+    pdf_buffer = io.BytesIO()
+    pdf.output(pdf_buffer)
+    pdf_buffer.seek(0)
+    return pdf_buffer
 
 uploaded_file = st.file_uploader("Загрузите файл", type=["csv", "xlsx", "xls", "json"])
 
