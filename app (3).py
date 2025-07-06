@@ -37,7 +37,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Заголовок
-st.title("🤖 AI Data Analyzer Pro")
+st.title("InsightBot Pro")
 st.markdown("""
     <div style="background-color:#ffffff;padding:10px;border-radius:10px;margin-bottom:20px;">
     <p style="color:#333;font-size:18px;">🚀 <b>Автоматический анализ данных с AI-powered инсайтами</b></p>
