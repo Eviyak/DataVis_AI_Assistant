@@ -28,10 +28,10 @@ if 'OPENAI_API_KEY' in st.secrets:
 else:
     openai.api_key = ""
 
-# Тема приложения - только светлая (убрана возможность выбора)
+# Тема дневная (без выбора)
 st.markdown("""
     <style>
-        .stApp { background-color: #f0f2f6; }
+        .stApp { background-color: #f0f2f6; color: #000000; }
         footer { visibility: hidden; }
     </style>
 """, unsafe_allow_html=True)
@@ -170,7 +170,7 @@ def time_series_analysis(df, date_col, value_col):
     except:
         return None
 
-# Новая функция: генерация инсайтов и предложения визуализации с разбором JSON
+# Генерация инсайтов и рекомендации по визуализации через OpenAI GPT
 @st.cache_data(show_spinner="Генерирую AI инсайты и рекомендации... 🤖", ttl=600)
 def generate_ai_insights_and_viz(df):
     if not openai.api_key:
@@ -211,5 +211,132 @@ def generate_ai_insights_and_viz(df):
             return insights, viz_type, x_axis, y_axis, z_axis, color, size
 
         except json.JSONDecodeError:
-            # Если JSON невалидный, возвращаем просто текст
-            return text, None, None, None, None,
+            return text, None, None, None, None, None, None
+
+    except Exception as e:
+        return f"Ошибка вызова OpenAI API: {str(e)}", None, None, None, None, None, None
+
+# Визуализация данных
+def create_visualization(df, viz_type, x=None, y=None, z=None, color=None, size=None):
+    try:
+        viz_df = df.sample(min(10000, len(df))) if len(df) > 10000 else df
+
+        if viz_type == "Гистограмма":
+            fig = px.histogram(viz_df, x=x, color=color, marginal="box", nbins=50)
+
+        elif viz_type == "Тепловая карта":
+            corr = viz_df.select_dtypes(include=np.number).corr()
+            fig = px.imshow(corr, text_auto=True, color_continuous_scale='RdBu_r', title="Корреляционная матрица")
+
+        elif viz_type == "3D scatter":
+            fig = px.scatter_3d(viz_df, x=x, y=y, z=z, color=color, size=size)
+
+        elif viz_type == "Временной ряд":
+            if is_datetime64_any_dtype(viz_df[x]):
+                fig = px.line(viz_df.sort_values(x), x=x, y=y, color=color)
+            else:
+                return None
+
+        elif viz_type == "candlestick":
+            # Проверяем нужные колонки
+            required = {'open', 'high', 'low', 'close'}
+            if required.issubset(set(viz_df.columns)):
+                fig = go.Figure(data=[go.Candlestick(
+                    x=viz_df[x] if x else viz_df.index,
+                    open=viz_df['open'],
+                    high=viz_df['high'],
+                    low=viz_df['low'],
+                    close=viz_df['close']
+                )])
+            else:
+                return None
+
+        elif viz_type == "аномалии":
+            anomalies = detect_anomalies(viz_df, y)
+            if anomalies is None or anomalies.empty:
+                return None
+            fig = px.scatter(viz_df, x=x, y=y, title="Аномалии в данных")
+            fig.add_trace(go.Scatter(x=anomalies[x], y=anomalies[y], mode='markers',
+                                     marker=dict(color='red', size=10), name='Аномалии'))
+
+        elif viz_type == "точечная диаграмма":
+            fig = px.scatter(viz_df, x=x, y=y, color=color, size=size)
+
+        else:
+            return None
+
+        fig.update_layout(height=600, margin=dict(t=50, b=50, l=50, r=50))
+        return fig
+
+    except Exception as e:
+        st.warning(f"Ошибка визуализации: {str(e)}")
+        return None
+
+# --- Основной интерфейс ---
+
+uploaded_file = st.file_uploader("Загрузите файл с данными (.csv, .xlsx, .json)", type=["csv", "xlsx", "xls", "json"])
+
+if uploaded_file:
+    df = load_data(uploaded_file)
+    if df is not None:
+        df = reduce_mem_usage(df)
+        st.subheader("Предварительный просмотр данных")
+        st.dataframe(df.head(100))
+
+        # AI анализ данных и визуализация
+        insights, viz_type, x_axis, y_axis, z_axis, color, size = generate_ai_insights_and_viz(df)
+
+        st.subheader("🤖 AI инсайты")
+        st.markdown(insights if insights else "Нет данных для инсайтов.")
+
+        if viz_type:
+            st.subheader(f"📈 Рекомендованная визуализация: {viz_type}")
+            fig = create_visualization(df, viz_type, x_axis, y_axis, z_axis, color, size)
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Не удалось построить визуализацию с предложенными параметрами.")
+
+        else:
+            st.info("AI не предложил подходящую визуализацию для ваших данных.")
+
+        # Расширенный анализ
+        with st.expander("Дополнительный анализ"):
+            st.markdown(analyze_with_ai(df))
+
+            num_cols = df.select_dtypes(include=np.number).columns.tolist()
+            if num_cols:
+                col_for_anom = st.selectbox("Выберите числовой столбец для поиска аномалий", num_cols)
+                anomalies = detect_anomalies(df, col_for_anom)
+                if anomalies is not None and not anomalies.empty:
+                    st.write(f"Найдено {len(anomalies)} аномалий в столбце {col_for_anom}")
+                    st.dataframe(anomalies.head(20))
+                    fig_anom = px.scatter(df, x=df.index, y=col_for_anom, title=f"Аномалии в {col_for_anom}")
+                    fig_anom.add_trace(go.Scatter(x=anomalies.index, y=anomalies[col_for_anom],
+                                                  mode='markers', marker=dict(color='red', size=10),
+                                                  name='Аномалии'))
+                    st.plotly_chart(fig_anom, use_container_width=True)
+
+            date_cols = df.select_dtypes(include=['datetime', 'datetimetz']).columns.tolist()
+            if not date_cols:
+                # Попытка конвертировать некоторые колонки
+                for c in df.columns:
+                    try:
+                        df[c] = pd.to_datetime(df[c])
+                        date_cols.append(c)
+                    except:
+                        continue
+
+            if date_cols and num_cols:
+                date_col = st.selectbox("Выберите столбец с датами", date_cols)
+                value_col = st.selectbox("Выберите числовой столбец для временного ряда", num_cols)
+                fig_ts = time_series_analysis(df, date_col, value_col)
+                if fig_ts:
+                    st.plotly_chart(fig_ts, use_container_width=True)
+                else:
+                    st.info("Не удалось выполнить декомпозицию временного ряда.")
+
+else:
+    st.info("Пожалуйста, загрузите файл с данными для анализа.")
+
+# --- Конец ---
