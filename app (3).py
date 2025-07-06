@@ -16,7 +16,7 @@ warnings.filterwarnings('ignore')
 
 # Настройки страницы
 st.set_page_config(
-    page_title="🤖 AI Data Analyzer Pro",
+    page_title="InsightBot Pro",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
