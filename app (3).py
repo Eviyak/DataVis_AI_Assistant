@@ -12,15 +12,23 @@ import json
 import datetime
 from pandas.api.types import is_numeric_dtype, is_datetime64_any_dtype
 import warnings
+import io
+import time
 warnings.filterwarnings('ignore')
 
-# Настройки страницы
+# Настройки страницы для Streamlit Cloud
 st.set_page_config(
     page_title="🤖 AI Data Analyzer Pro",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Загрузка переменных окружения из Streamlit Secrets
+if 'OPENAI_API_KEY' in st.secrets:
+    openai.api_key = st.secrets['OPENAI_API_KEY']
+else:
+    openai.api_key = ""
 
 # Темная/светлая тема
 theme = st.sidebar.radio("🎨 Тема", ["Светлая", "Темная"])
@@ -29,74 +37,111 @@ if theme == "Темная":
     st.markdown("""
         <style>
             .stApp { background-color: #1E1E1E; }
+            .st-bb { background-color: transparent; }
+            .st-at { background-color: #2E2E2E; }
             .css-1d391kg { color: white; }
+            footer { visibility: hidden; }
         </style>
     """, unsafe_allow_html=True)
 
 # Заголовок
 st.title("🤖 AI Data Analyzer Pro")
 st.markdown("""
-    *Автоматический анализ данных с AI-powered инсайтами*  
-    **Загрузите CSV, Excel или JSON** — получите полный анализ и визуализацию
-""")
+    <div style="background-color:#f0f2f6;padding:10px;border-radius:10px;margin-bottom:20px;">
+    <p style="color:#333;font-size:18px;">🚀 <b>Автоматический анализ данных с AI-powered инсайтами</b></p>
+    <p style="color:#666;">Загрузите CSV, Excel или JSON — получите полный анализ и визуализацию</p>
+    </div>
+""", unsafe_allow_html=True)
 
-# Функция загрузки данных
-@st.cache_data
+# Кэшированная функция загрузки данных
+@st.cache_data(show_spinner="Загружаю данные... ⏳", ttl=3600, max_entries=3)
 def load_data(uploaded_file):
     try:
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
-        elif uploaded_file.name.endswith(('.xlsx', '.xls')):
-            df = pd.read_excel(uploaded_file)
-        elif uploaded_file.name.endswith('.json'):
-            data = json.load(uploaded_file)
-            df = pd.DataFrame(data) if isinstance(data, list) else pd.json_normalize(data)
+        file_bytes = uploaded_file.read()
         
-        # Автоопределение дат
-        for col in df.columns:
-            if df[col].dtype == 'object':
-                try:
-                    df[col] = pd.to_datetime(df[col])
-                except:
-                    pass
-        return df
+        if uploaded_file.name.endswith('.csv'):
+            return pd.read_csv(io.BytesIO(file_bytes), encoding_errors='ignore')
+        
+        elif uploaded_file.name.endswith(('.xlsx', '.xls')):
+            return pd.read_excel(io.BytesIO(file_bytes))
+        
+        elif uploaded_file.name.endswith('.json'):
+            data = json.loads(file_bytes.decode('utf-8'))
+            return pd.json_normalize(data)
+        
     except Exception as e:
         st.error(f"Ошибка загрузки: {str(e)}")
         return None
 
+# Функция для уменьшения объема данных
+def reduce_mem_usage(df):
+    start_mem = df.memory_usage().sum() / 1024**2
+    for col in df.columns:
+        col_type = df[col].dtype
+        
+        if col_type != object:
+            c_min = df[col].min()
+            c_max = df[col].max()
+            if str(col_type)[:3] == 'int':
+                if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
+                    df[col] = df[col].astype(np.int8)
+                elif c_min > np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
+                    df[col] = df[col].astype(np.int16)
+                elif c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                    df[col] = df[col].astype(np.int32)
+                elif c_min > np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
+                    df[col] = df[col].astype(np.int64)
+            else:
+                if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
+                    df[col] = df[col].astype(np.float16)
+                elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                    df[col] = df[col].astype(np.float32)
+                else:
+                    df[col] = df[col].astype(np.float64)
+    end_mem = df.memory_usage().sum() / 1024**2
+    st.sidebar.info(f"Оптимизация памяти: {start_mem:.2f} MB → {end_mem:.2f} MB (сэкономлено {100*(start_mem-end_mem)/start_mem:.1f}%)")
+    return df
+
 # AI анализ данных
+@st.cache_data(show_spinner="Анализирую данные... 🔍", ttl=600)
 def analyze_with_ai(df):
     try:
-        analysis = f"Датасет содержит {df.shape[0]} строк и {df.shape[1]} колонок.\n"
+        analysis = f"### 📊 Общий обзор данных\n"
+        analysis += f"- **Строки:** {df.shape[0]}\n"
+        analysis += f"- **Колонки:** {df.shape[1]}\n"
+        analysis += f"- **Объем данных:** {df.memory_usage().sum() / 1024**2:.2f} MB\n\n"
         
         # Числовые колонки
         num_cols = df.select_dtypes(include=np.number).columns
         if len(num_cols) > 0:
-            analysis += "\n**Числовые данные:**\n"
-            for col in num_cols:
-                analysis += f"- {col}: среднее = {df[col].mean():.2f}, мин = {df[col].min():.2f}, макс = {df[col].max():.2f}\n"
+            analysis += "### 🔢 Числовые данные\n"
+            stats = df[num_cols].describe().transpose()
+            stats['skew'] = df[num_cols].skew()
+            analysis += stats[['mean', 'std', 'min', '50%', 'max', 'skew']].to_markdown()
         
         # Категориальные колонки
         cat_cols = df.select_dtypes(exclude=np.number).columns
         if len(cat_cols) > 0:
-            analysis += "\n**Категориальные данные:**\n"
+            analysis += "\n\n### 🔤 Категориальные данные\n"
             for col in cat_cols:
-                analysis += f"- {col}: {df[col].nunique()} уникальных значений\n"
+                analysis += f"- **{col}**: {df[col].nunique()} уникальных значений\n"
         
         # Пропущенные значения
         missing = df.isnull().sum()
         if missing.sum() > 0:
-            analysis += "\n⚠️ **Пропущенные значения:**\n"
-            for col, count in missing.items():
-                if count > 0:
-                    analysis += f"- {col}: {count} пропусков ({count/len(df):.1%})\n"
+            analysis += "\n\n### ⚠️ Пропущенные значения\n"
+            missing_percent = missing[missing > 0] / len(df) * 100
+            missing_df = pd.DataFrame({'Колонка': missing_percent.index, 
+                                      'Пропуски': missing[missing > 0], 
+                                      '%': missing_percent.values.round(1)})
+            analysis += missing_df.to_markdown(index=False)
         
         # Корреляции
         if len(num_cols) > 1:
             corr = df[num_cols].corr().abs().unstack().sort_values(ascending=False)
-            strong_corr = corr[(corr > 0.7) & (corr < 1)]
+            strong_corr = corr[(corr > 0.7) & (corr < 1)].drop_duplicates()
             if len(strong_corr) > 0:
-                analysis += "\n🔗 **Сильные корреляции:**\n"
+                analysis += "\n\n### 🔗 Сильные корреляции\n"
                 for pair, value in strong_corr.items():
                     analysis += f"- {pair[0]} и {pair[1]}: {value:.2f}\n"
         
@@ -105,20 +150,31 @@ def analyze_with_ai(df):
         return f"Ошибка анализа: {str(e)}"
 
 # Обнаружение аномалий
+@st.cache_data(show_spinner="Ищу аномалии... 🕵️", ttl=300)
 def detect_anomalies(df, column):
     try:
-        model = IsolationForest(contamination=0.05, random_state=42)
-        df['anomaly'] = model.fit_predict(df[[column]])
+        if len(df) > 10000:  # Для больших данных используем выборку
+            sample = df.sample(min(5000, len(df)))
+        else:
+            sample = df
+            
+        model = IsolationForest(contamination=0.05, random_state=42, n_jobs=-1)
+        model.fit(sample[[column]])
+        df['anomaly'] = model.predict(df[[column]])
         anomalies = df[df['anomaly'] == -1]
         return anomalies
     except:
         return None
 
 # Временной анализ
+@st.cache_data(show_spinner="Анализирую временные ряды... ⏳", ttl=300)
 def time_series_analysis(df, date_col, value_col):
     try:
         df = df.set_index(date_col).sort_index()
-        decomposition = seasonal_decompose(df[value_col], period=12)
+        if len(df) > 1000:
+            df = df.resample('D').mean()  # Ресемплинг для больших данных
+        
+        decomposition = seasonal_decompose(df[value_col], period=min(12, len(df)//2))
         
         fig = make_subplots(rows=4, cols=1, shared_xaxes=True)
         
@@ -133,83 +189,127 @@ def time_series_analysis(df, date_col, value_col):
         return None
 
 # Генерация инсайтов с GPT
+@st.cache_data(show_spinner="Генерирую AI инсайты... 🤖", ttl=600)
 def generate_ai_insights(df):
     try:
-        # Для демо используем локальную логику вместо реального API вызова
-        insights = ["AI анализ выявил следующие ключевые моменты:"]
+        # Если ключ API не установлен, используем локальную логику
+        if not openai.api_key:
+            return "🔑 Ключ OpenAI API не установлен. Добавьте его в Secrets для расширенного анализа."
+            
+        # Создаем компактное описание данных
+        data_summary = f"Данные содержат {len(df)} строк и {len(df.columns)} колонок:\n"
         
-        num_cols = df.select_dtypes(include=np.number).columns
-        if len(num_cols) > 1:
-            corr = df[num_cols].corr().abs().unstack().sort_values(ascending=False)
-            top_corr = corr[(corr > 0.5) & (corr < 1)].head(1)
-            if len(top_corr) > 0:
-                pair, value = top_corr.index[0], top_corr.values[0]
-                insights.append(f"Обнаружена сильная корреляция ({value:.2f}) между '{pair[0]}' и '{pair[1]}'")
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            unique = len(df[col].unique())
+            nulls = df[col].isnull().sum()
+            data_summary += f"- {col}: {dtype}, {unique} уникальных, {nulls} пропусков\n"
+            
+        # Формируем промпт
+        prompt = f"""
+        Ты профессиональный аналитик данных. Проанализируй этот датасет:
+        {data_summary}
         
-        date_cols = [col for col in df.columns if is_datetime64_any_dtype(df[col])]
-        if date_cols and len(num_cols) > 0:
-            insights.append(f"Данные содержат временные метки в колонке '{date_cols[0]}' - рекомендуется анализ временных рядов")
+        Сделай 3-5 ключевых вывода на русском языке. Будь конкретным. 
+        Если есть числовые колонки, укажи возможные корреляции. 
+        Если есть временные ряды, предложи методы анализа.
+        Формат: краткие пункты с emoji.
+        """
         
-        missing = df.isnull().sum()
-        if missing.sum() > 0:
-            worst_col = missing.idxmax()
-            insights.append(f"⚠️ Колонка '{worst_col}' содержит {missing.max()} пропущенных значений ({missing.max()/len(df):.1%} данных)")
+        # Вызов OpenAI API
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Ты опытный data scientist, специализирующийся на анализе данных."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            temperature=0.3
+        )
         
-        return "\n\n".join(insights)
-    except:
-        return "Не удалось сгенерировать AI инсайты"
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Ошибка генерации инсайтов: {str(e)}"
 
 # Визуализации
-def create_visualization(df, viz_type, x=None, y=None, z=None, color=None, size=None, animation=None):
+def create_visualization(df, viz_type, x=None, y=None, z=None, color=None, size=None):
     try:
+        # Прогресс-бар для больших данных
+        progress = st.progress(0)
+        progress.progress(20)
+        
+        # Ограничение размера данных для визуализации
+        viz_df = df.sample(min(10000, len(df))) if len(df) > 10000 else df
+        
+        fig = None
         if viz_type == "Гистограмма":
-            fig = px.histogram(df, x=x, color=color, marginal="box", nbins=50)
+            fig = px.histogram(viz_df, x=x, color=color, marginal="box", nbins=50)
         
         elif viz_type == "Тепловая карта":
-            corr = df.select_dtypes(include=np.number).corr()
+            corr = viz_df.select_dtypes(include=np.number).corr()
             fig = px.imshow(corr, text_auto=True, color_continuous_scale='RdBu')
         
         elif viz_type == "3D Scatter":
-            fig = px.scatter_3d(df, x=x, y=y, z=z, color=color, size=size)
+            fig = px.scatter_3d(viz_df, x=x, y=y, z=z, color=color, size=size)
         
         elif viz_type == "Аномалии":
             anomalies = detect_anomalies(df, x)
-            fig = px.scatter(df, x=x, y=y, color=df.index.isin(anomalies.index))
+            fig = px.scatter(viz_df, x=x, y=y, color=df.index.isin(anomalies.index))
         
         elif viz_type == "Временной ряд":
-            df = df.set_index(x).sort_index()
-            fig = px.line(df, y=y, color=color)
-            if len(df) > 30:
-                df['rolling'] = df[y].rolling(7).mean()
-                fig.add_scatter(x=df.index, y=df['rolling'], name='Скользящее среднее (7)')
+            if len(viz_df) > 1000:
+                viz_df = viz_df.set_index(x).resample('D').mean().reset_index()
+            fig = px.line(viz_df, x=x, y=y, color=color)
+            if len(viz_df) > 30:
+                viz_df['rolling'] = viz_df[y].rolling(7).mean()
+                fig.add_scatter(x=viz_df[x], y=viz_df['rolling'], name='Скользящее среднее (7)')
         
         elif viz_type == "Candlestick":
             fig = go.Figure(data=[go.Candlestick(
-                x=df[x],
-                open=df[y],
-                high=df[y]+df[y].std(),
-                low=df[y]-df[y].std(),
-                close=df[y])])
+                x=viz_df[x],
+                open=viz_df[y],
+                high=viz_df[y]+viz_df[y].std(),
+                low=viz_df[y]-viz_df[y].std(),
+                close=viz_df[y])])
         
         else:
-            fig = px.scatter(df, x=x, y=y, color=color, size=size, animation_frame=animation)
+            fig = px.scatter(viz_df, x=x, y=y, color=color, size=size)
         
-        fig.update_layout(
-            template="plotly_dark" if theme == "Темная" else "plotly_white",
-            hovermode="x unified"
-        )
+        progress.progress(80)
+        
+        if fig:
+            fig.update_layout(
+                template="plotly_dark" if theme == "Темная" else "plotly_white",
+                hovermode="x unified",
+                height=600
+            )
+            
+            # Оптимизация для больших данных
+            fig.update_traces(marker=dict(size=5, opacity=0.7))
+        
+        progress.progress(100)
+        time.sleep(0.2)
+        progress.empty()
         return fig
+        
     except Exception as e:
         st.error(f"Ошибка визуализации: {str(e)}")
         return None
 
 # Основной интерфейс
-uploaded_file = st.sidebar.file_uploader("📤 Загрузите файл", type=["csv", "xlsx", "json"])
+with st.sidebar:
+    st.header("📤 Загрузка данных")
+    uploaded_file = st.file_uploader("Выберите файл", type=["csv", "xlsx", "json"], label_visibility="collapsed")
+    
+    if uploaded_file:
+        st.info(f"Файл: {uploaded_file.name}")
+        st.caption("Поддерживаемые форматы: CSV, Excel, JSON")
 
 if uploaded_file:
     df = load_data(uploaded_file)
     if df is not None:
-        st.sidebar.success(f"✅ Успешно загружено: {df.shape[0]} строк, {df.shape[1]} колонок")
+        # Оптимизация памяти
+        df = reduce_mem_usage(df)
         
         # Основные вкладки
         tab1, tab2, tab3 = st.tabs(["🔍 Обзор данных", "📊 Визуализация", "🤖 AI Анализ"])
@@ -218,99 +318,159 @@ if uploaded_file:
             st.subheader("Превью данных")
             st.dataframe(df.head(), use_container_width=True)
             
-            st.subheader("Техническая информация")
-            st.write(f"**Типы данных:**\n{df.dtypes.to_frame().T}")
+            with st.expander("🔧 Техническая информация", expanded=True):
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.metric("Всего строк", len(df))
+                    st.metric("Всего колонок", len(df.columns))
+                    
+                    # Пропущенные значения
+                    missing = df.isnull().sum().sum()
+                    st.metric("Пропущенные значения", f"{missing} ({missing/df.size:.1%})")
+                
+                with c2:
+                    st.metric("Объем памяти", f"{df.memory_usage().sum() / 1024**2:.2f} MB")
+                    
+                    # Типы данных
+                    dtypes = df.dtypes.value_counts()
+                    for dtype, count in dtypes.items():
+                        st.caption(f"{dtype}: {count} колонок")
             
-            missing = df.isnull().sum()
-            if missing.sum() > 0:
-                st.warning(f"⚠️ Пропущенные значения:\n{missing[missing > 0]}")
-            else:
-                st.success("✅ Нет пропущенных значений")
+            with st.expander("📈 Быстрая визуализация", expanded=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    x_quick = st.selectbox("Ось X", df.columns, key="x_quick")
+                with col2:
+                    y_quick = st.selectbox("Ось Y", [None] + df.select_dtypes(include=np.number).columns.tolist(), key="y_quick")
+                
+                if st.button("Быстрый график", use_container_width=True):
+                    if y_quick:
+                        fig = px.scatter(df, x=x_quick, y=y_quick, hover_data=df.columns)
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        fig = px.histogram(df, x=x_quick)
+                        st.plotly_chart(fig, use_container_width=True)
         
         with tab2:
-            viz_type = st.selectbox("Тип визуализации", [
-                "Гистограмма", "Тепловая карта", "3D Scatter", 
-                "Аномалии", "Временной ряд", "Candlestick"
-            ])
+            st.subheader("Расширенная визуализация")
             
-            cols = st.columns(2)
+            cols = st.columns([1, 3])
             with cols[0]:
-                x_axis = st.selectbox("Ось X", df.columns, index=0)
+                viz_type = st.selectbox("Тип визуализации", [
+                    "Гистограмма", "Тепловая карта", "3D Scatter", 
+                    "Аномалии", "Временной ряд", "Candlestick"
+                ], key="viz_type")
+                
+                st.divider()
+                
+                x_axis = st.selectbox("Ось X", df.columns, index=0, key="x_axis")
+                
+                if viz_type not in ["Тепловая карта"]:
+                    y_options = [col for col in df.columns if col != x_axis]
+                    y_axis = st.selectbox("Ось Y", y_options, index=min(1, len(y_options)-1), key="y_axis")
+                
+                if viz_type == "3D Scatter":
+                    z_options = [col for col in df.select_dtypes(include=np.number).columns if col not in [x_axis, y_axis]]
+                    z_axis = st.selectbox("Ось Z", z_options, key="z_axis")
+                else:
+                    z_axis = None
+                
+                color = st.selectbox("Цвет", [None] + [col for col in df.columns if col not in [x_axis, y_axis]], key="color")
+                
+                if viz_type in ["Bubble", "3D Scatter"]:
+                    size = st.selectbox("Размер", [None] + df.select_dtypes(include=np.number).columns.tolist(), key="size")
+                else:
+                    size = None
+                
+                if st.button("Создать визуализацию", type="primary", use_container_width=True):
+                    st.session_state.viz_requested = True
+            
             with cols[1]:
-                y_axis = st.selectbox("Ось Y", df.columns, index=min(1, len(df.columns)-1))
-            
-            extra_cols = st.columns(3)
-            with extra_cols[0]:
-                z_axis = st.selectbox("Ось Z (3D)", [None] + df.select_dtypes(include=np.number).columns.tolist())
-            with extra_cols[1]:
-                color = st.selectbox("Цвет", [None] + df.columns.tolist())
-            with extra_cols[2]:
-                size = st.selectbox("Размер", [None] + df.select_dtypes(include=np.number).columns.tolist())
-            
-            if st.button("Создать визуализацию"):
-                fig = create_visualization(
-                    df, viz_type, 
-                    x=x_axis, y=y_axis, z=z_axis,
-                    color=color, size=size
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                if 'viz_requested' in st.session_state:
+                    with st.spinner("Создаю визуализацию..."):
+                        fig = create_visualization(
+                            df, viz_type, 
+                            x=x_axis, y=y_axis if viz_type != "Тепловая карта" else None,
+                            z=z_axis, color=color, size=size
+                        )
                     
-                    # Дополнительный анализ
-                    if viz_type == "Аномалии":
-                        anomalies = detect_anomalies(df, x_axis)
-                        if len(anomalies) > 0:
-                            st.warning(f"Обнаружено {len(anomalies)} аномалий")
-                            st.dataframe(anomalies)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Дополнительный анализ
+                        if viz_type == "Аномалии":
+                            anomalies = detect_anomalies(df, x_axis)
+                            if len(anomalies) > 0:
+                                st.warning(f"Обнаружено {len(anomalies)} аномалий")
+                                with st.expander("Показать аномалии"):
+                                    st.dataframe(anomalies)
         
         with tab3:
-            st.subheader("Автоматический анализ")
-            st.write(analyze_with_ai(df))
+            st.subheader("Автоматический анализ данных")
             
-            st.subheader("AI Инсайты")
-            st.write(generate_ai_insights(df))
+            ai_col1, ai_col2 = st.columns([2, 1])
+            
+            with ai_col1:
+                st.markdown(analyze_with_ai(df))
+            
+            with ai_col2:
+                st.subheader("🤖 AI Инсайты")
+                st.markdown(generate_ai_insights(df))
             
             # Анализ временных рядов
             date_cols = [col for col in df.columns if is_datetime64_any_dtype(df[col])]
             if date_cols and len(df.select_dtypes(include=np.number).columns) > 0:
-                st.subheader("Анализ временных рядов")
-                selected_date = st.selectbox("Выберите временную колонку", date_cols)
-                selected_value = st.selectbox("Выберите значение", df.select_dtypes(include=np.number).columns)
+                st.divider()
+                st.subheader("⏳ Анализ временных рядов")
                 
-                if st.button("Проанализировать временной ряд"):
-                    ts_fig = time_series_analysis(df, selected_date, selected_value)
+                ts_col1, ts_col2 = st.columns(2)
+                with ts_col1:
+                    selected_date = st.selectbox("Временная колонка", date_cols)
+                with ts_col2:
+                    selected_value = st.selectbox("Анализируемое значение", df.select_dtypes(include=np.number).columns)
+                
+                if st.button("Проанализировать временной ряд", use_container_width=True):
+                    with st.spinner("Выполняю анализ временного ряда..."):
+                        ts_fig = time_series_analysis(df, selected_date, selected_value)
+                    
                     if ts_fig:
                         st.plotly_chart(ts_fig, use_container_width=True)
-            
-            # Прогнозирование
-            if len(date_cols) > 0 and len(df.select_dtypes(include=np.number).columns) > 0:
-                st.subheader("Прогнозирование")
-                if st.button("Сделать прогноз (линейная регрессия)"):
-                    try:
-                        model = LinearRegression()
-                        X = pd.to_numeric(df[date_cols[0]]).values.reshape(-1, 1)
-                        y = df[selected_value]
-                        model.fit(X, y)
-                        
-                        future_dates = pd.date_range(
-                            start=df[date_cols[0]].max(),
-                            periods=10,
-                            freq=pd.infer_freq(df[date_cols[0]])
-                        
-                        future_X = pd.to_numeric(future_dates).values.reshape(-1, 1)
-                        future_y = model.predict(future_X)
-                        
-                        fig = go.Figure()
-                        fig.add_scatter(x=df[date_cols[0]], y=y, name="Исторические данные")
-                        fig.add_scatter(x=future_dates, y=future_y, name="Прогноз", line=dict(dash='dot'))
-                        st.plotly_chart(fig, use_container_width=True)
-                    except:
-                        st.error("Ошибка при прогнозировании")
 
 else:
-    st.info("👈 Пожалуйста, загрузите файл для начала анализа")
-    
+    # Страница приветствия
+    st.markdown("""
+        <div style="text-align:center; padding:50px 20px;">
+            <h2>Добро пожаловать в AI Data Analyzer Pro!</h2>
+            <p>Загрузите ваш файл с данными, чтобы начать анализ</p>
+            <div style="margin:40px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="#4e79a7" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+            </div>
+            <div style="display:flex; justify-content:center; gap:20px; margin-top:30px;">
+                <div style="border:1px solid #ddd; padding:20px; border-radius:10px; width:200px;">
+                    <h3>📊 Визуализация</h3>
+                    <p>Более 15 типов интерактивных графиков</p>
+                </div>
+                <div style="border:1px solid #ddd; padding:20px; border-radius:10px; width:200px;">
+                    <h3>🤖 AI Анализ</h3>
+                    <p>Автоматическое выявление паттернов и аномалий</p>
+                </div>
+                <div style="border:1px solid #ddd; padding:20px; border-radius:10px; width:200px;">
+                    <h3>⏱️ Быстрый</h3>
+                    <p>Оптимизирован для больших данных</p>
+                </div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+# Футер
 st.markdown("---")
 st.markdown("""
-    ### *Яковлева Эвелина Вячеслаовна*
-""")
+    <div style="text-align:center; padding:20px; color:#666;">
+        <p>🏆 AI Data Analyzer Pro | Яковлева Эвелина</p>
+        <p>Для работы с большими файлами используйте локальное развертывание</p>
+    </div>
+""", unsafe_allow_html=True)
