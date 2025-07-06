@@ -218,12 +218,11 @@ def generate_viz_recommendations(df):
             max_tokens=400
         )
         text = response['choices'][0]['message']['content']
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return None
+        viz_recs = clean_json(text)
+        return viz_recs
     except Exception:
         return None
+
 
 def create_visualization(df, viz_type, x_axis=None, y_axis=None, z_axis=None, color=None, size=None):
     try:
@@ -257,6 +256,7 @@ def create_visualization(df, viz_type, x_axis=None, y_axis=None, z_axis=None, co
                 fig = px.box(df, x=x_axis, y=y_axis, color=color)
                 return fig
         elif viz_type == "candlestick":
+            # Пример: x_axis - дата, y_axis - open, color - high, size - low, z_axis - close
             required_cols = [x_axis, y_axis, color, size]
             if all(c in df.columns for c in [x_axis, y_axis, color, size] if c):
                 fig = go.Figure(data=[go.Candlestick(
@@ -267,10 +267,10 @@ def create_visualization(df, viz_type, x_axis=None, y_axis=None, z_axis=None, co
                     close=df[z_axis] if z_axis in df.columns else df[y_axis]
                 )])
                 return fig
-        # fallback
         return None
     except Exception:
         return None
+
 
 
 ### --- Streamlit UI ---
