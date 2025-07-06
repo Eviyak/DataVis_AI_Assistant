@@ -197,15 +197,24 @@ def generate_viz_recommendations(df):
     if not openai.api_key:
         return None
 
-    prompt = (
-        f"Ты эксперт по визуализации данных. На основе этих данных предложи несколько типов визуализаций с выбором колонок:\n"
-        f"Данные: {df.shape[0]} строк, {df.shape[1]} колонок.\n"
-        f"Колонки: {list(df.columns)}.\n"
-        f"Первые 5 строк:\n{df.head().to_dict()}\n\n"
-        f"Предложи до 3 визуализаций в формате JSON с полями:\n"
-        f'{{"viz_type": "...", "x_axis": "...", "y_axis": "...", "z_axis": "...", "color": "...", "size": "..."}}\n'
-        f"Типы визуализаций могут быть: гистограмма, тепловая карта, scatter, 3D scatter, временной ряд, candlestick, ящик с усами и др."
-    )
+    
+    prompt = f"""
+Ты — эксперт по визуализации данных. На основе этих колонок данных:
+{list(df.columns)}
+
+Предложи ровно 3 разных визуализации в формате JSON:
+[
+  {{
+    "viz_type": "scatter",
+    "x_axis": "имя_колонки",
+    "y_axis": "имя_колонки",
+    "color": "имя_колонки или null"
+  }},
+  ...
+]
+
+Если какое-то поле не нужно — укажи null.
+"""
 
     try:
         response = openai.ChatCompletion.create(
@@ -214,63 +223,37 @@ def generate_viz_recommendations(df):
                 {"role": "system", "content": "Ты эксперт по визуализации данных."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
-            max_tokens=400
+            temperature=0.3,
+            max_tokens=300,
         )
         text = response['choices'][0]['message']['content']
-        viz_recs = clean_json(text)
+        viz_recs = extract_json_from_text(text)
+        if viz_recs is None:
+            st.error("Не удалось распарсить ответ AI. Вот что он ответил:")
+            st.text(text)
+            return []
         return viz_recs
-    except Exception:
-        return None
+    except Exception as e:
+        st.error(f"Ошибка OpenAI API: {e}")
+        return []
 
+def plot_viz(df, viz):
+    viz_type = viz.get("viz_type")
+    x = viz.get("x_axis")
+    y = viz.get("y_axis")
+    color = viz.get("color")
 
-def create_visualization(df, viz_type, x_axis=None, y_axis=None, z_axis=None, color=None, size=None):
-    try:
-        if viz_type is None:
-            return None
-        viz_type = viz_type.lower()
-
-        if viz_type == "гистограмма":
-            if x_axis:
-                fig = px.histogram(df, x=x_axis, color=color, nbins=30)
-                return fig
-        elif viz_type == "тепловая карта":
-            if x_axis and y_axis:
-                pivot = pd.pivot_table(df, values=size or y_axis, index=y_axis, columns=x_axis, aggfunc='mean')
-                fig = px.imshow(pivot)
-                return fig
-        elif viz_type == "scatter":
-            if x_axis and y_axis:
-                fig = px.scatter(df, x=x_axis, y=y_axis, color=color, size=size)
-                return fig
-        elif viz_type == "3d scatter":
-            if x_axis and y_axis and z_axis:
-                fig = px.scatter_3d(df, x=x_axis, y=y_axis, z=z_axis, color=color, size=size)
-                return fig
-        elif viz_type == "временной ряд":
-            if x_axis and y_axis:
-                fig = px.line(df, x=x_axis, y=y_axis, color=color)
-                return fig
-        elif viz_type == "ящик с усами":
-            if x_axis and y_axis:
-                fig = px.box(df, x=x_axis, y=y_axis, color=color)
-                return fig
-        elif viz_type == "candlestick":
-            # Пример: x_axis - дата, y_axis - open, color - high, size - low, z_axis - close
-            required_cols = [x_axis, y_axis, color, size]
-            if all(c in df.columns for c in [x_axis, y_axis, color, size] if c):
-                fig = go.Figure(data=[go.Candlestick(
-                    x=df[x_axis],
-                    open=df[y_axis],
-                    high=df[color],
-                    low=df[size],
-                    close=df[z_axis] if z_axis in df.columns else df[y_axis]
-                )])
-                return fig
-        return None
-    except Exception:
-        return None
-
+    if viz_type == "scatter" and x in df.columns and y in df.columns:
+        fig = px.scatter(df, x=x, y=y, color=color if color in df.columns else None)
+        st.plotly_chart(fig, use_container_width=True)
+    elif viz_type == "гистограмма" and x in df.columns:
+        fig = px.histogram(df, x=x, color=color if color in df.columns else None)
+        st.plotly_chart(fig, use_container_width=True)
+    elif viz_type == "box" and x in df.columns and y in df.columns:
+        fig = px.box(df, x=x, y=y, color=color if color in df.columns else None)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info(f"Не могу построить визуализацию: {viz}")
 
 
 ### --- Streamlit UI ---
