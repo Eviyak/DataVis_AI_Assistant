@@ -203,7 +203,9 @@ def generate_ai_insights_and_viz(df):
     f"- 2D histogram\n"
     f"- boxen plot\n"
     f"- временной heatmap\n\n"
-    f"Ответь в JSON формате:\n"
+
+####
+        
     f'{{"insights": "...", "visualizations": [{{"viz_type": "...", "x_axis": "...", "y_axis": "...", "z_axis": "...", "color": "...", "size": "..."}}]}}\n'
     f"Если какой-то тип визуализации не подходит, просто пропусти его."
 )
