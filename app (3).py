@@ -91,7 +91,7 @@ def reduce_mem_usage(df):
 @st.cache_data(show_spinner="Анализирую данные... 🔍", ttl=600)
 def analyze_with_ai(df):
     try:
-        analysis = f"### 📊 Общий обзор данных\n"
+        ####
         analysis += f"- **Строки:** {df.shape[0]}\n"
         analysis += f"- **Колонки:** {df.shape[1]}\n"
         analysis += f"- **Объем данных:** {df.memory_usage().sum() / 1024**2:.2f} MB\n\n"
