@@ -286,19 +286,29 @@ if uploaded_file:
         # AI анализ данных и визуализация
         insights, viz_type, x_axis, y_axis, z_axis, color, size = generate_ai_insights_and_viz(df)
 
-        st.subheader("🤖 AI инсайты")
-        st.markdown(insights if insights else "Нет данных для инсайтов.")
+        # 🤖 AI Инсайты
+with st.container():
+    st.markdown("## 🤖 Инсайты от AI")
+    st.markdown("""
+        <div style="background-color:#ffffff;padding:15px 20px;border-left:5px solid #4CAF50;border-radius:6px;">
+        <p style="color:#333;font-size:16px;">{}</p>
+        </div>
+    """.format(insights.replace("\n", "<br>") if insights else "Нет данных для инсайтов."),
+    unsafe_allow_html=True)
 
-        if viz_type:
-            st.subheader(f"📈 Рекомендованная визуализация: {viz_type}")
-            fig = create_visualization(df, viz_type, x_axis, y_axis, z_axis, color, size)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("Не удалось построить визуализацию с предложенными параметрами.")
+# 📈 AI Визуализация
+with st.container():
+    st.markdown("## 📈 Визуализация, рекомендованная AI")
 
+    if viz_type:
+        st.markdown(f"**Тип визуализации:** `{viz_type}`")
+        fig = create_visualization(df, viz_type, x_axis, y_axis, z_axis, color, size)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("AI не предложил подходящую визуализацию для ваших данных.")
+            st.warning("❌ Не удалось построить визуализацию с предложенными параметрами.")
+    else:
+        st.info("ℹ️ AI не предложил подходящую визуализацию для ваших данных.")
 
         # Расширенный анализ
         with st.expander("Дополнительный анализ"):
