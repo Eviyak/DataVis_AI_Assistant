@@ -10,10 +10,10 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-API ключ из секрета
+
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-Интерфейс чата
+
 st.title("Chat с GPT")
 
 user_input = st.text_input("Введите сообщение:")
