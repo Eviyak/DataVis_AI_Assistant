@@ -224,12 +224,27 @@ def generate_viz_recommendations(df):
     except Exception as e:
         return f"Ошибка OpenAI API: {e}"
 
-st.subheader("🎨 Рекомендации по визуализациям")
-viz_recs = generate_viz_recommendations(df)
-if viz_recs:
-    st.markdown(viz_recs)
+if uploaded_file:
+    df = load_data(uploaded_file)
+    if df is not None:
+        df = reduce_mem_usage(df)
+        st.success(f"Файл загружен: {uploaded_file.name} ({df.shape[0]} строк, {df.shape[1]} колонок)")
+        st.dataframe(df.head())
+
+        st.subheader("🤖 AI Инсайты по данным")
+        insights = generate_ai_insights(df)
+        st.markdown(insights)
+
+        st.subheader("🎨 Рекомендации по визуализациям")
+        viz_recs = generate_viz_recommendations(df)
+        if viz_recs:
+            st.markdown(viz_recs)
+        else:
+            st.info("Нет рекомендаций по визуализациям.")
+    else:
+        st.error("Не удалось загрузить данные из файла.")
 else:
-    st.info("Нет рекомендаций по визуализациям.")
+    st.info("Пожалуйста, загрузите файл для анализа.")
 
 
 ### --- Streamlit UI ---
