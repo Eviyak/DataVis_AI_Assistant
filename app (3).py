@@ -224,18 +224,12 @@ def generate_viz_recommendations(df):
     except Exception as e:
         return f"Ошибка OpenAI API: {e}"
 
-st.title("🎨 Рекомендации по визуализациям")
-
-uploaded_file = st.file_uploader("Загрузите CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
-
-if uploaded_file:
-    df = load_data(uploaded_file)
-    if df is not None:
-        st.write("Данные:")
-        st.dataframe(df.head())
-        st.subheader("Рекомендации по визуализациям от AI")
-        recommendations = generate_viz_recommendations(df)
-        st.markdown(recommendations)
+st.subheader("🎨 Рекомендации по визуализациям")
+viz_recs = generate_viz_recommendations(df)
+if viz_recs:
+    st.markdown(viz_recs)
+else:
+    st.info("Нет рекомендаций по визуализациям.")
 
 
 ### --- Streamlit UI ---
