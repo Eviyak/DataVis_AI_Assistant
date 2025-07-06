@@ -6,53 +6,7 @@ import plotly.graph_objects as go
 import openai
 import os
 from io import StringIO
-
-
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-
-st.set_page_config(page_title="AI Data Insights", layout="wide")
-st.header("Загрузите CSV-файл для анализа с помощью AI")
-
-
-uploaded_file = st.file_uploader("Выберите CSV-файл", type=["csv"])
-
-if uploaded_file is not None:
-    
-    try:
-        df = pd.read_csv(uploaded_file)
-        st.subheader("📊 Предварительный просмотр данных")
-        st.dataframe(df.head())
-
-        sample_data = df.head(20).to_csv(index=False)
-
-        prompt = f"""
-        Ниже представлена таблица с данными (CSV). Проанализируй её и сделай краткий вывод (инсайты, закономерности, аномалии и интересные наблюдения).
-        Постарайся быть кратким и полезным.
-
-        Данные:
-        {sample_data}
-        """
-
-        with st.spinner("🔍 Анализируем данные с помощью GPT..."):
-            response = openai.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "Ты — опытный аналитик данных."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=500
-            )
-
-        insight = response.choices[0].message.content
-        st.subheader("🧠 AI-инсайты по загруженным данным")
-        st.markdown(insight)
-
-    except Exception as e:
-        st.error(f"Ошибка при обработке файла: {e}")
-else:
-    st.info("Пожалуйста, загрузите CSV-файл для начала анализа.")
-
 from plotly.subplots import make_subplots
 from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.seasonal import seasonal_decompose
