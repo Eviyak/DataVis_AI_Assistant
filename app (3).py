@@ -3,34 +3,23 @@ import pandas as pd
 import plotly.express as px
 import openai
 
-# Подключение OpenAI API
-client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+# Устанавливаем ключ API из секретов
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-st.title("AI Визуализация и анализ данных")
+st.title("AI Визуализация данных и анализ")
 
 uploaded_file = st.file_uploader("Загрузите CSV-файл", type=["csv"])
-
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
-    st.success("Файл успешно загружен!")
+    st.success("Файл загружен!")
 
-    st.subheader("Общие сведения о данных")
-    st.write("Форма данных:", df.shape)
-    st.write("Типы данных:")
-    st.write(df.dtypes)
-    st.write("Пример данных:")
-    st.dataframe(df.head())
+    st.header("Анализ данных")
+    st.write(df.describe(include='all'))
 
     col = st.selectbox("Выберите колонку для визуализации", df.columns)
 
-    st.subheader("Статистическое описание колонки")
-    try:
-        st.text(df[col].describe(include='all').to_string())
-    except Exception as e:
-        st.warning(f"Ошибка анализа: {e}")
-
     def simple_smart_plot(data, column):
-        """Автоматический выбор визуализации на основе типа данных"""
+        """Выбор графика по типу данных"""
         if pd.api.types.is_numeric_dtype(data[column]):
             return px.histogram(data, x=column, title=f'Гистограмма: {column}')
         elif pd.api.types.is_datetime64_any_dtype(data[column]):
@@ -43,48 +32,47 @@ if uploaded_file is not None:
             return px.bar(x=counts.index, y=counts.values, title=f'Бар-чарт: {column}', labels={'x': column, 'y': 'Количество'})
         return px.histogram(data, x=column, title=f'Гистограмма (по умолчанию): {column}')
 
-    use_ai = st.checkbox("Использовать GPT-4 для выбора графика и инсайтов", value=True)
+    use_ai = st.checkbox("Использовать GPT-4 для выбора графика и инсайтов", value=False)
 
     if use_ai:
         with st.spinner("AI анализирует данные..."):
-            try:
-                description = df[col].describe(include='all').to_string()
+            description = df[col].describe(include='all').to_string()
 
-                system_prompt = "Ты эксперт по визуализации и анализу данных. По описанию столбца предложи лучший тип графика и сделай краткий анализ."
-                user_prompt = f"""Вот описание столбца '{col}':
+            system_prompt = "Ты помощник по анализу и визуализации данных."
+            user_prompt = f"""Вот описание столбца '{col}':
 {description}
 
-1. Какой тип графика лучше всего подходит для анализа этого столбца? Ответь ОДНИМ словом (в нижнем регистре): histogram, bar, line, box или pie.
-2. Затем, кратко напиши инсайт о данных в этом столбце (на русском языке).
-"""
+1) Какой тип графика лучше всего подходит для анализа этого столбца? Ответь одним словом: histogram, bar, line, box или pie.
+2) Дай короткий инсайт (одно-два предложения) по этому столбцу."""
 
-                response = client.chat.completions.create(
+            try:
+                response = openai.chat.completions.create(
                     model="gpt-4",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ]
                 )
-
-                answer = response.choices[0].message.content.strip()
-                lines = answer.splitlines()
-                suggestion = lines[0].strip().lower()
-                insight = "\n".join(lines[1:]).strip()
-
-                st.info(f"💡 **GPT предложил тип графика:** `{suggestion}`")
-                if insight:
-                    st.success(f"📊 **AI-инсайт:**\n\n{insight}")
-
+                answer = response.choices[0].message.content.strip().lower()
+                # Разбиваем ответ на тип графика и инсайт
+                lines = answer.split('\n')
+                suggestion = lines[0].strip()
+                insight = '\n'.join(lines[1:]).strip()
             except Exception as e:
                 st.error(f"Ошибка GPT: {e}")
                 suggestion = "histogram"
+                insight = ""
 
-        # Построение графика по совету GPT
+        st.info(f"GPT предлагает использовать график: **{suggestion}**")
+        if insight:
+            st.markdown(f"**Инсайт от AI:** {insight}")
+
+        # Отрисовка графика на основе предложения GPT
         if suggestion == "histogram":
             fig = px.histogram(df, x=col, title=f'Гистограмма: {col}')
         elif suggestion == "bar":
             counts = df[col].value_counts()
-            fig = px.bar(x=counts.index, y=counts.values, title=f'Бар-чарт: {col}', labels={'x': col, 'y': 'Количество'})
+            fig = px.bar(x=counts.index, y=counts.values, title=f'Бар-чарт: {col}')
         elif suggestion == "line":
             num_cols = df.select_dtypes(include='number').columns
             if len(num_cols) > 0:
