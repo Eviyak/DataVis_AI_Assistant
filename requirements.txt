@@ -4,5 +4,5 @@ numpy
 plotly
 scikit-learn
 statsmodels
-openai
+openai==0.28.0
 tabulate
