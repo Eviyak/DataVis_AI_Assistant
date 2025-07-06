@@ -4,15 +4,29 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import openai
-import io
-import json
-import warnings
+import os
+from io import StringIO
 from plotly.subplots import make_subplots
 from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.seasonal import seasonal_decompose
+import json
+import io
+import time
+import warnings
 from pandas.api.types import is_datetime64_any_dtype
 
 warnings.filterwarnings('ignore')
+
+# Загрузка API ключа OpenAI из Streamlit Secrets
+if 'OPENAI_API_KEY' in st.secrets:
+    openai.api_key = st.secrets['OPENAI_API_KEY']
+else:
+    openai.api_key = ""
+
+# Проверка наличия ключа
+if not openai.api_key:
+    st.error("🔑 Ключ OpenAI API не найден. Пожалуйста, настройте секрет OPENAI_API_KEY")
+    st.stop()
 
 # Настройки страницы
 st.set_page_config(
@@ -22,24 +36,23 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Загрузка API ключа OpenAI из Streamlit Secrets
-if 'OPENAI_API_KEY' in st.secrets:
-    openai.api_key = st.secrets['OPENAI_API_KEY']
-else:
-    openai.api_key = ""
-
-# Тема дневная (без выбора)
-st.markdown("""
-    <style>
-        .stApp { background-color: #f0f2f6; color: #000000; }
-        footer { visibility: hidden; }
-    </style>
-""", unsafe_allow_html=True)
+# Тема приложения
+theme = st.sidebar.radio("🎨 Тема", ["Светлая", "Темная"])
+if theme == "Темная":
+    st.markdown("""
+        <style>
+            .stApp { background-color: #1E1E1E; }
+            .st-bb { background-color: transparent; }
+            .st-at { background-color: #2E2E2E; }
+            .css-1d391kg { color: white; }
+            footer { visibility: hidden; }
+        </style>
+    """, unsafe_allow_html=True)
 
 # Заголовок
 st.title("🤖 AI Data Analyzer Pro")
 st.markdown("""
-    <div style="background-color:#ffffff;padding:10px;border-radius:10px;margin-bottom:20px;">
+    <div style="background-color:#f0f2f6;padding:10px;border-radius:10px;margin-bottom:20px;">
     <p style="color:#333;font-size:18px;">🚀 <b>Автоматический анализ данных с AI-powered инсайтами</b></p>
     <p style="color:#666;">Загрузите CSV, Excel или JSON — получите полный анализ и визуализацию</p>
     </div>
@@ -51,7 +64,7 @@ def load_data(uploaded_file):
     try:
         file_bytes = uploaded_file.read()
         if uploaded_file.name.endswith('.csv'):
-            return pd.read_csv(io.BytesIO(file_bytes), encoding_errors='ignore')
+            return pd.read_csv(io.BytesIO(file_bytes), encoding_errors='ignore'
         elif uploaded_file.name.endswith(('.xlsx', '.xls')):
             return pd.read_excel(io.BytesIO(file_bytes))
         elif uploaded_file.name.endswith('.json'):
@@ -173,36 +186,31 @@ def time_series_analysis(df, date_col, value_col):
 # Генерация AI инсайтов
 @st.cache_data(show_spinner="Генерирую AI инсайты... 🤖", ttl=600)
 def generate_ai_insights(df):
-    if not openai.api_key:
-        return "🔑 Ключ OpenAI API не установлен. Добавьте его в Secrets."
-
-    prompt = (
-        f"Ты аналитик данных. Сделай краткий аналитический отчет по следующим данным:\n"
-        f"- Строки: {df.shape[0]}, Колонки: {df.shape[1]}\n"
-        f"- Колонки: {list(df.columns)}\n"
-        f"- Первые 5 строк:\n{df.head().to_dict()}\n\n"
-        f"Сфокусируйся на:\n"
-        f"1. Ключевых закономерностях и трендах\n"
-        f"2. Необычных аномалиях или выбросах\n"
-        f"3. Интересных корреляциях\n"
-        f"4. Потенциальных проблемах с данными\n"
-        f"5. Практических бизнес-инсайтах\n\n"
-        f"Отвечай только текстовым отчетом, без JSON или специального форматирования."
-    )
-
     try:
+        if not openai.api_key:
+            return "🔑 Ключ OpenAI API не установлен. Добавьте его в Secrets."
+
+        prompt = (
+            f"Дай краткий аналитический отчет и рекомендации по данным.\n"
+            f"Данные имеют {df.shape[0]} строк и {df.shape[1]} колонок.\n"
+            f"Колонки: {list(df.columns)}.\n"
+            f"Первые 5 строк:\n{df.head().to_dict()}\n"
+            f"Пожалуйста, дай инсайты и рекомендации."
+        )
+
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Ты аналитик данных, специализирующийся на выявлении скрытых закономерностей."},
+                {"role": "system", "content": "Ты аналитик данных."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=1000
+            max_tokens=600
         )
-        return response['choices'][0]['message']['content']
+        text = response['choices'][0]['message']['content']
+        return text
     except Exception as e:
-        return f"Ошибка вызова OpenAI API: {str(e)}"
+        return f"Ошибка OpenAI: {str(e)}"
 
 # Генерация рекомендаций по визуализации
 @st.cache_data(show_spinner="Генерирую рекомендации по визуализации... 🎨", ttl=600)
@@ -297,25 +305,29 @@ def create_visualization(df, viz_type, x=None, y=None, z=None, color=None, size=
         else:
             return None
 
-        fig.update_layout(height=600, margin=dict(t=50, b=50, l=50, r=50))
+        fig.update_layout(
+            template="plotly_dark" if theme == "Темная" else "plotly_white",
+            height=600,
+            margin=dict(t=50, b=50, l=50, r=50)
+        )
         return fig
 
     except Exception as e:
         st.warning(f"Ошибка визуализации: {str(e)}")
         return None
 
-# --- Основной интерфейс ---
+# === UI ===
 
-uploaded_file = st.file_uploader("Загрузите файл с данными (.csv, .xlsx, .json)", type=["csv", "xlsx", "xls", "json"])
-
-if uploaded_file:
+uploaded_file = st.file_uploader("📂 Загрузите CSV, Excel или JSON файл", type=['csv', 'xlsx', 'xls', 'json'])
+if uploaded_file is not None:
     df = load_data(uploaded_file)
-    if df is not None:
+    if df is not None and not df.empty:
         df = reduce_mem_usage(df)
-        st.subheader("Предварительный просмотр данных")
-        st.dataframe(df.head(100))
 
-        # Раздел AI инсайтов
+        st.sidebar.subheader("Выберите колонки для анализа и визуализации")
+        columns = df.columns.tolist()
+
+        # Разделение инсайтов и визуализации
         st.subheader("🤖 Глубокие аналитические инсайты")
         with st.spinner("Ищу скрытые закономерности..."):
             insights = generate_ai_insights(df)
@@ -348,41 +360,43 @@ if uploaded_file:
         else:
             st.info("ИИ не предложил подходящую визуализацию для ваших данных")
 
-        # Расширенный анализ
-        with st.expander("Дополнительный анализ"):
-            st.markdown(analyze_with_ai(df))
+        # Дополнительные элементы управления
+        st.sidebar.subheader("Ручная настройка визуализации")
+        x_axis_manual = st.sidebar.selectbox("X-ось", options=columns)
+        y_axis_manual = st.sidebar.selectbox("Y-ось", options=[None] + columns)
+        z_axis_manual = st.sidebar.selectbox("Z-ось (для 3D)", options=[None] + columns)
+        color_manual = st.sidebar.selectbox("Цвет", options=[None] + columns)
+        size_manual = st.sidebar.selectbox("Размер", options=[None] + columns)
+        viz_type_manual = st.sidebar.selectbox("Тип визуализации", [
+            "гистограмма",
+            "тепловая карта",
+            "3D scatter",
+            "временной ряд",
+            "candlestick",
+            "аномалии",
+            "точечная диаграмма"
+        ])
 
-            num_cols = df.select_dtypes(include=np.number).columns.tolist()
-            if num_cols:
-                col_for_anom = st.selectbox("Выберите числовой столбец для поиска аномалий", num_cols)
-                anomalies = detect_anomalies(df, col_for_anom)
-                if anomalies is not None and not anomalies.empty:
-                    st.write(f"Найдено {len(anomalies)} аномалий в столбце {col_for_anom}")
-                    st.dataframe(anomalies.head(20))
-                    fig_anom = px.scatter(df, x=df.index, y=col_for_anom, title=f"Аномалии в {col_for_anom}")
-                    fig_anom.add_trace(go.Scatter(x=anomalies.index, y=anomalies[col_for_anom],
-                                                  mode='markers', marker=dict(color='red', size=10),
-                                                  name='Аномалии'))
-                    st.plotly_chart(fig_anom, use_container_width=True)
+        if st.sidebar.button("Показать ручную визуализацию"):
+            fig_manual = create_visualization(
+                df, 
+                viz_type_manual, 
+                x_axis_manual, 
+                y_axis_manual, 
+                z_axis_manual, 
+                color_manual, 
+                size_manual
+            )
+            if fig_manual:
+                st.plotly_chart(fig_manual, use_container_width=True)
+            else:
+                st.warning("Не удалось построить график с выбранными параметрами")
 
-            date_cols = df.select_dtypes(include=['datetime', 'datetimetz']).columns.tolist()
-            if not date_cols:
-                # Попытка конвертировать некоторые колонки
-                for c in df.columns:
-                    try:
-                        df[c] = pd.to_datetime(df[c])
-                        date_cols.append(c)
-                    except:
-                        continue
+        st.sidebar.markdown("---")
+        if st.sidebar.button("Показать исходные данные"):
+            st.dataframe(df)
 
-            if date_cols and num_cols:
-                date_col = st.selectbox("Выберите столбец с датами", date_cols)
-                value_col = st.selectbox("Выберите числовой столбец для временного ряда", num_cols)
-                fig_ts = time_series_analysis(df, date_col, value_col)
-                if fig_ts:
-                    st.plotly_chart(fig_ts, use_container_width=True)
-                else:
-                    st.info("Не удалось выполнить декомпозицию временного ряда.")
-
+    else:
+        st.warning("Не удалось загрузить данные из файла или файл пустой.")
 else:
-    st.info("Пожалуйста, загрузите файл с данными для анализа.")
+    st.info("Пожалуйста, загрузите файл для начала анализа.")
