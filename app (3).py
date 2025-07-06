@@ -38,7 +38,7 @@ def load_data(uploaded_file):
 @st.cache_data
 def generate_insights_and_visuals(df):
     if not openai.api_key:
-        return "API ключ не установлен", [], []
+        return "❌ API ключ не установлен", [], []
 
     prompt = (
         f"Ты опытный аналитик данных. На основе следующего DataFrame:\n"
@@ -59,11 +59,20 @@ def generate_insights_and_visuals(df):
             temperature=0.7,
             max_tokens=1000
         )
-        content = response.choices[0].message.content
-        result = json.loads(content)
-        return result.get("insights", ""), result.get("visualizations", []), None
+        content = response.choices[0].message.content.strip()
+
+        if not content:
+            return "⚠️ GPT вернул пустой ответ", [], None
+
+        try:
+            result = json.loads(content)
+            return result.get("insights", ""), result.get("visualizations", []), None
+        except json.JSONDecodeError as e:
+            return f"⚠️ Не удалось разобрать JSON:\n```json\n{content}\n```\n\nОшибка: {e}", [], None
+
     except Exception as e:
-        return f"Ошибка: {e}", [], None
+        return f"❌ Ошибка API запроса: {e}", [], None
+
 
 # Построение графика
 def create_visualization(df, viz):
