@@ -37,47 +37,47 @@ def fig_to_bytes(fig):
     return buf
 
 
-def generate_pdf_report(df, data_info, stats_info, ai_info, hist_img_buf, boxplot_img_buf):
+
+def generate_pdf_report(data_info, stats_info, ai_info, hist_img_buf=None, boxplot_img_buf=None):
     pdf = FPDF()
-    # Добавляем шрифты
+    # Добавляем шрифты DejaVu (обычный и жирный)
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
 
     pdf.add_page()
 
-    # Заголовок
+    # Заголовок отчёта по центру
     pdf.set_font('DejaVu', 'B', 20)
     pdf.cell(0, 15, 'Отчёт', align='C', ln=True)
     pdf.ln(10)
 
-    # Раздел Данные
+    # Раздел "Данные"
     pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, 'Данные', ln=True)
     pdf.set_font('DejaVu', '', 12)
     pdf.multi_cell(0, 8, data_info)
     pdf.ln(5)
 
-    # Раздел Статистика
+    # Раздел "Статистика"
     pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, 'Статистика', ln=True)
     pdf.set_font('DejaVu', '', 12)
     pdf.multi_cell(0, 8, stats_info)
     pdf.ln(5)
 
-    # Вставка графиков
-    if hist_img_buf is not None:
+    # Вставка графиков, если они есть
+    if hist_img_buf:
         pdf.image(hist_img_buf, x=10, w=90)
-    if boxplot_img_buf is not None:
+    if boxplot_img_buf:
         pdf.image(boxplot_img_buf, x=110, w=90)
     pdf.ln(5)
 
-    # Раздел AI-модель
+    # Раздел "AI-модель"
     pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, 'AI-модель', ln=True)
     pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 8, ai_info)
+    pdf.multi_cell(0, 8, ai_info if ai_info else "Информация отсутствует")
 
-    # Вывод в буфер
     buffer = io.BytesIO()
     pdf.output(buffer)
     buffer.seek(0)
