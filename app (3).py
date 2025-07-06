@@ -3,6 +3,28 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+
+import streamlit as st
+import openai
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+API ключ из секрета
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
+Интерфейс чата
+st.title("Chat с GPT")
+
+user_input = st.text_input("Введите сообщение:")
+
+if user_input:
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": user_input}]
+    )
+    st.write(response.choices[0].message.content)
+
 from plotly.subplots import make_subplots
 from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.seasonal import seasonal_decompose
