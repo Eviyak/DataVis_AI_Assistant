@@ -4,18 +4,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import json
 import io
-from io import BytesIO
-from fpdf import FPDF
-import tempfile
 
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
+st.set_page_config(page_title="📊 DataVis AI", layout="wide")
+st.title("📊 AI-помощник для анализа данных")
+st.markdown("Загрузите CSV, Excel или JSON файл и исследуйте данные через умные графики")
 
-st.set_page_config(page_title="📊 AI Визуализатор Данных", layout="wide")
-st.title("📊 AI-помощник для визуализации и анализа данных")
-st.markdown("Загрузите файл (CSV, Excel или JSON) — и получите автоматический анализ + графики + AI классификацию + PDF отчёт.")
-
+# Загрузка данных
 def load_data(uploaded_file):
     try:
         if uploaded_file.name.endswith('.csv'):
@@ -26,136 +20,71 @@ def load_data(uploaded_file):
             data = json.load(uploaded_file)
             return pd.DataFrame(data) if isinstance(data, list) else None
     except Exception as e:
-        st.error(f"Ошибка при загрузке файла: {e}")
+        st.error(f"Ошибка загрузки: {e}")
         return None
 
-def fig_to_bytes(fig):
-    buf = io.BytesIO()
-    fig.savefig(buf, format='PNG')
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-def generate_pdf_report(data_info, stats_info, ai_info, images):
-    pdf = FPDF()
-    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-    pdf.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
-    pdf.add_page()
-
-    pdf.set_font('DejaVu', 'B', 20)
-    pdf.cell(0, 15, 'Отчёт', align='C', ln=True)
-    pdf.ln(10)
-
-    pdf.set_font('DejaVu', 'B', 16)
-    pdf.cell(0, 10, 'Данные', ln=True)
-    pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 8, data_info)
-    pdf.ln(5)
-
-    pdf.set_font('DejaVu', 'B', 16)
-    pdf.cell(0, 10, 'Статистика', ln=True)
-    pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 8, stats_info)
-    pdf.ln(5)
-
-    for img_buf in images:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-            tmp.write(img_buf.getbuffer())
-            tmp.flush()
-            pdf.image(tmp.name, x=10, w=190)
-
-    pdf.ln(5)
-
-    pdf.set_font('DejaVu', 'B', 16)
-    pdf.cell(0, 10, 'AI-модель', ln=True)
-    pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 8, ai_info if ai_info else "Информация отсутствует")
-
-    buffer = io.BytesIO()
-    pdf.output(buffer)
-    buffer.seek(0)
-    return buffer
-
 uploaded_file = st.file_uploader("Загрузите файл", type=["csv", "xlsx", "xls", "json"])
-
-ai_report_text = None
-images = []
 
 if uploaded_file:
     df = load_data(uploaded_file)
     if df is not None:
         st.success(f"✅ Загружено {df.shape[0]} строк и {df.shape[1]} колонок")
+        st.dataframe(df.head())
 
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 Данные", "📈 Графики", "🧠 AI-модель", "📄 Отчёт"])
+        st.subheader("📈 Построение графиков")
+        col1, col2 = st.columns(2)
 
-        with tab1:
-            st.dataframe(df.head(100))
+        with col1:
+            selected_col1 = st.selectbox("Выберите первую колонку", df.columns)
+        with col2:
+            selected_col2 = st.selectbox("Выберите вторую колонку (необязательно)", [None] + list(df.columns))
 
-        with tab2:
-            st.subheader("📈 Автоматическая визуализация")
-            num_cols = df.select_dtypes(include='number').columns
-            cat_cols = df.select_dtypes(include='object').columns
+        # Определим типы графиков по данным
+        numeric_cols = df.select_dtypes(include='number').columns
+        categorical_cols = df.select_dtypes(exclude='number').columns
 
-            if len(num_cols) > 0:
-                st.markdown("### Гистограммы")
-                for col in num_cols:
-                    fig, ax = plt.subplots()
-                    sns.histplot(df[col], kde=True, ax=ax)
-                    ax.set_title(f"Гистограмма: {col}")
-                    st.pyplot(fig)
-                    images.append(fig_to_bytes(fig))
+        available_plots = []
 
-            if len(cat_cols) > 0:
-                st.markdown("### Распределение категорий")
-                for col in cat_cols:
-                    fig, ax = plt.subplots()
-                    df[col].value_counts().plot(kind='bar', ax=ax)
-                    ax.set_title(f"Категориальное распределение: {col}")
-                    st.pyplot(fig)
-                    images.append(fig_to_bytes(fig))
+        if selected_col1 and not selected_col2:
+            if selected_col1 in numeric_cols:
+                available_plots = ['Гистограмма', 'Boxplot', 'Карта плотности (KDE)']
+            elif selected_col1 in categorical_cols:
+                available_plots = ['Barplot']
 
-            if len(num_cols) > 1:
-                st.markdown("### Корреляционная матрица")
-                fig, ax = plt.subplots()
-                sns.heatmap(df[num_cols].corr(), annot=True, cmap='coolwarm', ax=ax)
-                ax.set_title("Корреляционная матрица")
+        if selected_col1 and selected_col2:
+            if selected_col1 in numeric_cols and selected_col2 in numeric_cols:
+                available_plots = ['Scatterplot', 'Линейный график']
+            elif (selected_col1 in categorical_cols and selected_col2 in numeric_cols) or \
+                 (selected_col2 in categorical_cols and selected_col1 in numeric_cols):
+                available_plots = ['Boxplot', 'Barplot']
+
+        plot_type = st.selectbox("Тип графика", available_plots if available_plots else ["Недоступно"])
+
+        if st.button("📊 Построить график") and plot_type != "Недоступно":
+            fig, ax = plt.subplots(figsize=(8, 5))
+
+            try:
+                if plot_type == 'Гистограмма':
+                    sns.histplot(df[selected_col1], kde=True, ax=ax)
+                elif plot_type == 'Boxplot':
+                    if selected_col2:
+                        sns.boxplot(x=df[selected_col2], y=df[selected_col1], ax=ax)
+                    else:
+                        sns.boxplot(y=df[selected_col1], ax=ax)
+                elif plot_type == 'Barplot':
+                    if selected_col2:
+                        sns.barplot(x=df[selected_col1], y=df[selected_col2], ax=ax)
+                    else:
+                        sns.countplot(x=df[selected_col1], ax=ax)
+                elif plot_type == 'Карта плотности (KDE)':
+                    sns.kdeplot(df[selected_col1], fill=True, ax=ax)
+                elif plot_type == 'Scatterplot':
+                    sns.scatterplot(x=df[selected_col1], y=df[selected_col2], ax=ax)
+                elif plot_type == 'Линейный график':
+                    sns.lineplot(x=df[selected_col1], y=df[selected_col2], ax=ax)
                 st.pyplot(fig)
-                images.append(fig_to_bytes(fig))
+            except Exception as e:
+                st.error(f"Ошибка построения графика: {e}")
 
-                st.markdown("### Парные диаграммы")
-                pairplot = sns.pairplot(df[num_cols])
-                st.pyplot(pairplot)
-
-        with tab3:
-            st.subheader("🧠 Обучение модели (RandomForestClassifier)")
-            target_column = st.selectbox("Выберите целевую переменную (классификация)", df.columns)
-            features = [col for col in df.select_dtypes(include='number').columns if col != target_column]
-
-            if len(features) > 0:
-                X = df[features]
-                y = df[target_column]
-
-                try:
-                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-                    model = RandomForestClassifier()
-                    model.fit(X_train, y_train)
-                    y_pred = model.predict(X_test)
-                    ai_report_text = classification_report(y_test, y_pred, zero_division=0)
-                    st.code(ai_report_text, language='text')
-                except Exception as e:
-                    st.error(f"Ошибка обучения: {e}")
-            else:
-                st.warning("Недостаточно числовых признаков для обучения модели.")
-
-        with tab4:
-            st.subheader("📄 Генерация PDF-отчёта")
-            data_info = f"Количество строк: {df.shape[0]}\nКоличество колонок: {df.shape[1]}"
-            stats_summary = f"""
-Основные статистики по числовым данным:
-{df.describe().to_string()}
-"""
-            if st.button("📥 Скачать отчёт в PDF"):
-                pdf_buffer = generate_pdf_report(data_info, stats_summary, ai_report_text, images)
-                st.download_button("📄 Скачать PDF", data=pdf_buffer, file_name="ai_data_report.pdf", mime="application/pdf")
 else:
-    st.info("Пожалуйста, загрузите CSV, Excel или JSON файл для анализа.")
+    st.info("Пожалуйста, загрузите файл для начала анализа.")
