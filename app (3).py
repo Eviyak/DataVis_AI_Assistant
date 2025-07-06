@@ -37,39 +37,41 @@ def fig_to_bytes(fig):
 
 def generate_pdf_report(data_info, stats_info, ai_info, hist_img_buf=None, boxplot_img_buf=None):
     pdf = FPDF()
-    # Добавляем шрифты DejaVu (обычный и жирный)
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
-
     pdf.add_page()
 
-    # Заголовок отчёта по центру
     pdf.set_font('DejaVu', 'B', 20)
     pdf.cell(0, 15, 'Отчёт', align='C', ln=True)
     pdf.ln(10)
 
-    # Раздел "Данные"
     pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, 'Данные', ln=True)
     pdf.set_font('DejaVu', '', 12)
     pdf.multi_cell(0, 8, data_info)
     pdf.ln(5)
 
-    # Раздел "Статистика"
     pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, 'Статистика', ln=True)
     pdf.set_font('DejaVu', '', 12)
     pdf.multi_cell(0, 8, stats_info)
     pdf.ln(5)
 
-    # Вставка графиков, если они есть
+    # Сохраняем буферы во временные файлы и вставляем
     if hist_img_buf:
-        pdf.image(hist_img_buf, x=10, w=90)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_hist:
+            tmp_hist.write(hist_img_buf.getbuffer())
+            tmp_hist.flush()
+            pdf.image(tmp_hist.name, x=10, w=90)
+
     if boxplot_img_buf:
-        pdf.image(boxplot_img_buf, x=110, w=90)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_box:
+            tmp_box.write(boxplot_img_buf.getbuffer())
+            tmp_box.flush()
+            pdf.image(tmp_box.name, x=110, w=90)
+
     pdf.ln(5)
 
-    # Раздел "AI-модель"
     pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, 'AI-модель', ln=True)
     pdf.set_font('DejaVu', '', 12)
@@ -79,6 +81,7 @@ def generate_pdf_report(data_info, stats_info, ai_info, hist_img_buf=None, boxpl
     pdf.output(buffer)
     buffer.seek(0)
     return buffer
+
 
 uploaded_file = st.file_uploader("Загрузите файл", type=["csv", "xlsx", "xls", "json"])
 
