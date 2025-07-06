@@ -233,7 +233,6 @@ if uploaded_file:
     if df is not None:
         st.write("Данные:")
         st.dataframe(df.head())
-
         st.subheader("Рекомендации по визуализациям от AI")
         recommendations = generate_viz_recommendations(df)
         st.markdown(recommendations)
@@ -256,27 +255,12 @@ if uploaded_file:
         st.markdown(insights)
 
         st.subheader("🎨 Рекомендации по визуализациям")
-        viz_recs = generate_viz_recommendations(df)
-        if viz_recs:
-            if isinstance(viz_recs, dict):
-                viz_recs = [viz_recs]  # если один объект, обернем в список
-            for i, viz in enumerate(viz_recs):
-                st.markdown(f"**Визуализация {i+1}:** {viz.get('viz_type', 'Не указано')}")
-                fig = create_visualization(
-                    df,
-                    viz.get('viz_type'),
-                    viz.get('x_axis'),
-                    viz.get('y_axis'),
-                    viz.get('z_axis'),
-                    viz.get('color'),
-                    viz.get('size')
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("Невозможно построить эту визуализацию с текущими данными.")
-        else:
-            st.info("Нет рекомендаций по визуализациям.")
+viz_recs = generate_viz_recommendations(df)
+if viz_recs:
+    st.markdown(viz_recs)
+else:
+    st.info("Нет рекомендаций по визуализациям.")
+
 
 else:
     st.info("Пожалуйста, загрузите файл для анализа.")
