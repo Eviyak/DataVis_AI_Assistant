@@ -6,6 +6,7 @@ import json
 import io
 from io import BytesIO
 from fpdf import FPDF
+import tempfile  # <-- вот сюда добавь
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
