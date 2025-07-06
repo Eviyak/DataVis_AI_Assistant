@@ -34,18 +34,17 @@ def load_data(uploaded_file):
 # 📄 Генерация PDF
 def generate_pdf_report(df, summary_text):
     pdf = FPDF()
+    # Добавляем шрифт DejaVuSans с поддержкой Unicode
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.set_font('DejaVu', '', 14)
+
     pdf.add_page()
+    pdf.cell(0, 10, 'Отчет по данным', ln=True)
 
-    # ✅ Добавляем шрифт Unicode
-    pdf.add_font("DejaVu", "", "DejaVuSans.ttf", uni=True)
-    pdf.set_font("DejaVu", size=12)
+    pdf.set_font('DejaVu', '', 12)
+    pdf.multi_cell(0, 10, summary_text)
 
-    pdf.cell(200, 10, txt="📄 Автоматический отчёт", ln=True, align="C")
-    pdf.ln(10)
-
-    for line in summary_text.split("\n"):
-        pdf.multi_cell(0, 10, txt=line)
-
+    # Создаем буфер для вывода PDF в память
     buffer = io.BytesIO()
     pdf.output(buffer)
     buffer.seek(0)
