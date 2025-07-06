@@ -45,6 +45,7 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
+# === КЭШ ЗАГРУЗКИ ===
 @st.cache_data(show_spinner="Загружаю данные... ⏳", ttl=3600, max_entries=3)
 def load_data(uploaded_file):
     try:
@@ -129,42 +130,6 @@ def analyze_with_ai(df):
     except Exception as e:
         return f"Ошибка анализа: {str(e)}"
 
-@st.cache_data(show_spinner="Ищу аномалии... 🕵️", ttl=300)
-def detect_anomalies(df, column):
-    try:
-        if len(df) > 10000:
-            sample = df.sample(min(5000, len(df)))
-        else:
-            sample = df
-
-        model = IsolationForest(contamination=0.05, random_state=42, n_jobs=-1)
-        model.fit(sample[[column]])
-        df['anomaly'] = model.predict(df[[column]])
-        anomalies = df[df['anomaly'] == -1]
-        return anomalies
-    except:
-        return None
-
-@st.cache_data(show_spinner="Анализирую временные ряды... ⏳", ttl=300)
-def time_series_analysis(df, date_col, value_col):
-    try:
-        df = df.set_index(date_col).sort_index()
-        if len(df) > 1000:
-            df = df.resample('D').mean()
-
-        decomposition = seasonal_decompose(df[value_col], period=min(12, len(df)//2))
-
-        fig = make_subplots(rows=4, cols=1, shared_xaxes=True)
-        fig.add_trace(go.Scatter(x=df.index, y=df[value_col], name='Исходные данные'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=decomposition.trend.index, y=decomposition.trend, name='Тренд'), row=2, col=1)
-        fig.add_trace(go.Scatter(x=decomposition.seasonal.index, y=decomposition.seasonal, name='Сезонность'), row=3, col=1)
-        fig.add_trace(go.Scatter(x=decomposition.resid.index, y=decomposition.resid, name='Остатки'), row=4, col=1)
-
-        fig.update_layout(height=800, title_text="Декомпозиция временного ряда")
-        return fig
-    except:
-        return None
-
 @st.cache_data(show_spinner="Генерирую AI инсайты... 🤖", ttl=600)
 def generate_ai_insights(df):
     if not openai.api_key:
@@ -197,7 +162,6 @@ def generate_viz_recommendations(df):
     if not openai.api_key:
         return None
 
-    
     prompt = f"""
 Ты — эксперт по визуализации данных. Посмотри на колонки этих данных: {list(df.columns)}.
 Предложи 3 простые и понятные рекомендации для построения графиков. 
@@ -224,12 +188,20 @@ def generate_viz_recommendations(df):
     except Exception as e:
         return f"Ошибка OpenAI API: {e}"
 
+# === UI ===
+st.sidebar.header("Загрузите файл с данными")
+uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
+
 if uploaded_file:
     df = load_data(uploaded_file)
     if df is not None:
         df = reduce_mem_usage(df)
         st.success(f"Файл загружен: {uploaded_file.name} ({df.shape[0]} строк, {df.shape[1]} колонок)")
         st.dataframe(df.head())
+
+        st.subheader("📊 Общий анализ данных")
+        summary = analyze_with_ai(df)
+        st.markdown(summary)
 
         st.subheader("🤖 AI Инсайты по данным")
         insights = generate_ai_insights(df)
@@ -245,25 +217,3 @@ if uploaded_file:
         st.error("Не удалось загрузить данные из файла.")
 else:
     st.info("Пожалуйста, загрузите файл для анализа.")
-
-
-### --- Streamlit UI ---
-
-st.sidebar.header("Загрузите файл с данными")
-uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
-
-if uploaded_file:
-    df = load_data(uploaded_file)
-    if df is not None:
-        df = reduce_mem_usage(df)
-        st.success(f"Файл загружен: {uploaded_file.name} ({df.shape[0]} строк, {df.shape[1]} колонок)")
-        st.dataframe(df.head())
-
-        st.subheader("🤖 AI Инсайты по данным")
-        insights = generate_ai_insights(df)
-        st.markdown(insights)
-    else:
-        st.error("Не удалось загрузить данные из файла.")
-else:
-    st.info("Пожалуйста, загрузите файл для анализа.")
-
