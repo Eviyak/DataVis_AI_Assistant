@@ -34,8 +34,8 @@ def load_data(uploaded_file):
 # 📄 Генерация PDF
 def generate_pdf_report(df, summary_text):
     pdf = FPDF()
-    # Добавляем шрифт DejaVuSans с поддержкой Unicode
-    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    # Загружаем шрифт из файла DejaVuSans.ttf, который должен лежать в той же папке, что и скрипт
+    pdf.add_font('DejaVu', '', os.path.join(os.path.dirname(__file__), 'DejaVuSans.ttf'), uni=True)
     pdf.set_font('DejaVu', '', 14)
 
     pdf.add_page()
@@ -44,12 +44,12 @@ def generate_pdf_report(df, summary_text):
     pdf.set_font('DejaVu', '', 12)
     pdf.multi_cell(0, 10, summary_text)
 
-    # Создаем буфер для вывода PDF в память
-    buffer = io.BytesIO()
-    pdf.output(buffer)
+    # Генерируем PDF как строку, затем конвертим в байты и помещаем в BytesIO
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    buffer = io.BytesIO(pdf_bytes)
     buffer.seek(0)
     return buffer
-
+    
 # Интерфейс загрузки
 uploaded_file = st.file_uploader("Загрузите файл", type=["csv", "xlsx", "xls", "json"])
 
