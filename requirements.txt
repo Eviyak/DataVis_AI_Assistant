@@ -2,7 +2,5 @@ streamlit
 pandas
 matplotlib
 seaborn
-scikit-learn
-fpdf
 openpyxl
-xlsxwriter
+plotly
