@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 import json
 import io
 from io import BytesIO
-import tempfile
 from fpdf import FPDF
+import tempfile
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
@@ -36,7 +36,7 @@ def fig_to_bytes(fig):
     buf.seek(0)
     return buf
 
-def generate_pdf_report(data_info, stats_info, ai_info, hist_img_buf=None, boxplot_img_buf=None):
+def generate_pdf_report(data_info, stats_info, ai_info, images):
     pdf = FPDF()
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
@@ -58,18 +58,11 @@ def generate_pdf_report(data_info, stats_info, ai_info, hist_img_buf=None, boxpl
     pdf.multi_cell(0, 8, stats_info)
     pdf.ln(5)
 
-    # Сохраняем графики во временные файлы для вставки
-    if hist_img_buf:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_hist:
-            tmp_hist.write(hist_img_buf.getbuffer())
-            tmp_hist.flush()
-            pdf.image(tmp_hist.name, x=10, w=90)
-
-    if boxplot_img_buf:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_box:
-            tmp_box.write(boxplot_img_buf.getbuffer())
-            tmp_box.flush()
-            pdf.image(tmp_box.name, x=110, w=90)
+    for img_buf in images:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            tmp.write(img_buf.getbuffer())
+            tmp.flush()
+            pdf.image(tmp.name, x=10, w=190)
 
     pdf.ln(5)
 
@@ -78,56 +71,60 @@ def generate_pdf_report(data_info, stats_info, ai_info, hist_img_buf=None, boxpl
     pdf.set_font('DejaVu', '', 12)
     pdf.multi_cell(0, 8, ai_info if ai_info else "Информация отсутствует")
 
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
-    return io.BytesIO(pdf_bytes)
-
-# ==== Основной интерфейс ====
+    buffer = io.BytesIO()
+    pdf.output(buffer)
+    buffer.seek(0)
+    return buffer
 
 uploaded_file = st.file_uploader("Загрузите файл", type=["csv", "xlsx", "xls", "json"])
 
 ai_report_text = None
-hist_buf = None
-boxplot_buf = None
-selected = None
+images = []
 
 if uploaded_file:
     df = load_data(uploaded_file)
     if df is not None:
         st.success(f"✅ Загружено {df.shape[0]} строк и {df.shape[1]} колонок")
 
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 Данные", "📈 Анализ", "🧠 AI-модель", "📄 Отчёт"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 Данные", "📈 Графики", "🧠 AI-модель", "📄 Отчёт"])
 
         with tab1:
             st.dataframe(df.head(100))
 
         with tab2:
-            st.subheader("📊 Статистика")
-            st.write("Типы данных:")
-            st.write(df.dtypes)
-            st.write("Пропущенные значения:")
-            st.write(df.isnull().sum())
-
+            st.subheader("📈 Автоматическая визуализация")
             num_cols = df.select_dtypes(include='number').columns
+            cat_cols = df.select_dtypes(include='object').columns
+
             if len(num_cols) > 0:
-                selected = st.selectbox("Выберите числовую колонку для гистограммы", num_cols)
-                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-                sns.histplot(df[selected], ax=ax1, kde=True)
-                ax1.set_title("Распределение")
-                sns.boxplot(x=df[selected], ax=ax2)
-                ax2.set_title("Boxplot")
+                st.markdown("### Гистограммы")
+                for col in num_cols:
+                    fig, ax = plt.subplots()
+                    sns.histplot(df[col], kde=True, ax=ax)
+                    ax.set_title(f"Гистограмма: {col}")
+                    st.pyplot(fig)
+                    images.append(fig_to_bytes(fig))
+
+            if len(cat_cols) > 0:
+                st.markdown("### Распределение категорий")
+                for col in cat_cols:
+                    fig, ax = plt.subplots()
+                    df[col].value_counts().plot(kind='bar', ax=ax)
+                    ax.set_title(f"Категориальное распределение: {col}")
+                    st.pyplot(fig)
+                    images.append(fig_to_bytes(fig))
+
+            if len(num_cols) > 1:
+                st.markdown("### Корреляционная матрица")
+                fig, ax = plt.subplots()
+                sns.heatmap(df[num_cols].corr(), annot=True, cmap='coolwarm', ax=ax)
+                ax.set_title("Корреляционная матрица")
                 st.pyplot(fig)
+                images.append(fig_to_bytes(fig))
 
-                fig_hist, ax_hist = plt.subplots(figsize=(6, 4))
-                sns.histplot(df[selected], ax=ax_hist, kde=True)
-                ax_hist.set_title("Распределение")
-                hist_buf = fig_to_bytes(fig_hist)
-
-                fig_box, ax_box = plt.subplots(figsize=(6, 4))
-                sns.boxplot(x=df[selected], ax=ax_box)
-                ax_box.set_title("Boxplot")
-                boxplot_buf = fig_to_bytes(fig_box)
-            else:
-                st.warning("Нет числовых колонок для визуализации.")
+                st.markdown("### Парные диаграммы")
+                pairplot = sns.pairplot(df[num_cols])
+                st.pyplot(pairplot)
 
         with tab3:
             st.subheader("🧠 Обучение модели (RandomForestClassifier)")
@@ -146,7 +143,7 @@ if uploaded_file:
                     ai_report_text = classification_report(y_test, y_pred, zero_division=0)
                     st.code(ai_report_text, language='text')
                 except Exception as e:
-                    st.error(f"Ошибка обучения модели: {e}")
+                    st.error(f"Ошибка обучения: {e}")
             else:
                 st.warning("Недостаточно числовых признаков для обучения модели.")
 
@@ -154,14 +151,11 @@ if uploaded_file:
             st.subheader("📄 Генерация PDF-отчёта")
             data_info = f"Количество строк: {df.shape[0]}\nКоличество колонок: {df.shape[1]}"
             stats_summary = f"""
-Выбранная колонка для визуализации: {selected if selected else 'не выбрана'}
-
 Основные статистики по числовым данным:
 {df.describe().to_string()}
 """
-
             if st.button("📥 Скачать отчёт в PDF"):
-                pdf_buffer = generate_pdf_report(data_info, stats_summary, ai_report_text, hist_buf, boxplot_buf)
+                pdf_buffer = generate_pdf_report(data_info, stats_summary, ai_report_text, images)
                 st.download_button("📄 Скачать PDF", data=pdf_buffer, file_name="ai_data_report.pdf", mime="application/pdf")
 else:
     st.info("Пожалуйста, загрузите CSV, Excel или JSON файл для анализа.")
