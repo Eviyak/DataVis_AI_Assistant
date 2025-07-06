@@ -12,12 +12,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 
-# Настройка страницы
 st.set_page_config(page_title="📊 AI Визуализатор Данных", layout="wide")
 st.title("📊 AI-помощник для визуализации и анализа данных")
 st.markdown("Загрузите файл (CSV, Excel или JSON) — и получите автоматический анализ + графики + AI классификацию + PDF отчёт.")
 
-# Загрузка и парсинг файла
 def load_data(uploaded_file):
     try:
         if uploaded_file.name.endswith('.csv'):
@@ -31,27 +29,67 @@ def load_data(uploaded_file):
         st.error(f"Ошибка при загрузке файла: {e}")
         return None
 
-# 📄 Генерация PDF
-def generate_pdf_report(df, summary_text):
+def fig_to_bytes(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format='PNG')
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+def generate_pdf_report(df, stats_text, ai_report, hist_fig_buf=None, boxplot_fig_buf=None):
     pdf = FPDF()
-    # Загружаем шрифт из файла DejaVuSans.ttf, который должен лежать в той же папке, что и скрипт
     pdf.add_font('DejaVu', '', os.path.join(os.path.dirname(__file__), 'DejaVuSans.ttf'), uni=True)
-    pdf.set_font('DejaVu', '', 14)
+    pdf.set_font('DejaVu', '', 16)
 
+    # Первая страница с заголовком "Отчет"
     pdf.add_page()
-    pdf.cell(0, 10, 'Отчет по данным', ln=True)
+    pdf.set_xy(0, 50)
+    pdf.cell(210, 10, "Отчет", ln=True, align='C')
 
+    # Вторая страница - Данные
+    pdf.add_page()
+    pdf.set_font('DejaVu', 'B', 14)
+    pdf.cell(0, 10, "Данные", ln=True)
     pdf.set_font('DejaVu', '', 12)
-    pdf.multi_cell(0, 10, summary_text)
+    data_info = f"Файл содержит {df.shape[0]} строк и {df.shape[1]} колонок.\n\nТипы данных:\n{df.dtypes.to_string()}\n\nПропущенные значения:\n{df.isnull().sum().to_string()}"
+    pdf.multi_cell(0, 8, data_info)
 
-    # Генерируем PDF как строку, затем конвертим в байты и помещаем в BytesIO
+    # Третья страница - Статистика + графики
+    pdf.add_page()
+    pdf.set_font('DejaVu', 'B', 14)
+    pdf.cell(0, 10, "Статистика", ln=True)
+    pdf.set_font('DejaVu', '', 12)
+    pdf.multi_cell(0, 8, stats_text)
+
+    # Вставляем графики если они есть
+    y_pos = pdf.get_y() + 10
+    x_center = 10
+    img_w = 90  # ширина изображения
+
+    if hist_fig_buf:
+        pdf.image(hist_fig_buf, x=x_center, y=y_pos, w=img_w)
+    if boxplot_fig_buf:
+        # Вторая картинка справа
+        pdf.image(boxplot_fig_buf, x=x_center + img_w + 10, y=y_pos, w=img_w)
+
+    # Четвёртая страница - AI модель
+    pdf.add_page()
+    pdf.set_font('DejaVu', 'B', 14)
+    pdf.cell(0, 10, "AI-модель", ln=True)
+    pdf.set_font('DejaVu', '', 12)
+    pdf.multi_cell(0, 8, ai_report if ai_report else "Модель не обучалась.")
+
+    # Генерируем PDF в байтах и возвращаем буфер
     pdf_bytes = pdf.output(dest='S').encode('latin1')
     buffer = io.BytesIO(pdf_bytes)
     buffer.seek(0)
     return buffer
-    
-# Интерфейс загрузки
+
 uploaded_file = st.file_uploader("Загрузите файл", type=["csv", "xlsx", "xls", "json"])
+
+ai_report_text = None
+hist_buf = None
+boxplot_buf = None
 
 if uploaded_file:
     df = load_data(uploaded_file)
@@ -80,6 +118,21 @@ if uploaded_file:
                 ax2.set_title("Boxplot")
                 st.pyplot(fig)
 
+                # Сохраняем графики для отчёта
+                hist_buf = fig_to_bytes(fig=fig)
+                # Разделяем изображение для вставки в PDF, потому что обе картинки на одном рисунке
+                # Для простоты сделаем отдельные графики отдельно:
+                # Гистограмма
+                fig_hist, ax_hist = plt.subplots(figsize=(6,4))
+                sns.histplot(df[selected], ax=ax_hist, kde=True)
+                ax_hist.set_title("Распределение")
+                hist_buf = fig_to_bytes(fig_hist)
+                # Боксплот
+                fig_box, ax_box = plt.subplots(figsize=(6,4))
+                sns.boxplot(x=df[selected], ax=ax_box)
+                ax_box.set_title("Boxplot")
+                boxplot_buf = fig_to_bytes(fig_box)
+
         with tab3:
             st.subheader("🧠 Обучение модели (RandomForestClassifier)")
 
@@ -95,8 +148,8 @@ if uploaded_file:
                     model = RandomForestClassifier()
                     model.fit(X_train, y_train)
                     y_pred = model.predict(X_test)
-                    report = classification_report(y_test, y_pred, zero_division=0)
-                    st.code(report, language='text')
+                    ai_report_text = classification_report(y_test, y_pred, zero_division=0)
+                    st.code(ai_report_text, language='text')
                 except Exception as e:
                     st.error(f"Ошибка обучения: {e}")
             else:
@@ -104,20 +157,14 @@ if uploaded_file:
 
         with tab4:
             st.subheader("📄 Генерация PDF-отчёта")
-            report_summary = f"""
-Файл: {uploaded_file.name}
-Строк: {df.shape[0]}, Колонок: {df.shape[1]}
+            stats_summary = f"""
+Выбранная колонка для визуализации: {selected if 'selected' in locals() else 'не выбрана'}
 
-Типы данных:
-{df.dtypes.to_string()}
-
-Пропущенные значения:
-{df.isnull().sum().to_string()}
-
-(Если обучалась AI-модель, см. вкладку 'AI-модель')
+Основные статистики по числовым данным:
+{df.describe().to_string()}
 """
             if st.button("📥 Скачать отчёт в PDF"):
-                pdf = generate_pdf_report(df, report_summary)
-                st.download_button("📄 Скачать PDF", data=pdf, file_name="ai_data_report.pdf", mime="application/pdf")
+                pdf_buffer = generate_pdf_report(df, stats_summary, ai_report_text, hist_buf, boxplot_buf)
+                st.download_button("📄 Скачать PDF", data=pdf_buffer, file_name="ai_data_report.pdf", mime="application/pdf")
 else:
     st.info("Пожалуйста, загрузите CSV, Excel или JSON файл для анализа.")
