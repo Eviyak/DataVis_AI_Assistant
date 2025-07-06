@@ -6,15 +6,15 @@ import plotly.graph_objects as go
 import openai
 import io
 import json
+import warnings
 from plotly.subplots import make_subplots
 from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.seasonal import seasonal_decompose
-import warnings
 from pandas.api.types import is_datetime64_any_dtype
 
 warnings.filterwarnings('ignore')
 
-# Настройки страницы (только светлая тема)
+# Настройки страницы
 st.set_page_config(
     page_title="🤖 AI Data Analyzer Pro",
     page_icon="📊",
@@ -22,23 +22,30 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Заголовок и описание
-st.title("🤖 AI Data Analyzer Pro")
-st.markdown("""
-    <div style="background-color:#f0f2f6;padding:10px;border-radius:10px;margin-bottom:20px;">
-    <p style="color:#333;font-size:18px;">🚀 <b>Автоматический анализ данных с AI-powered инсайтами</b></p>
-    <p style="color:#666;">Загрузите CSV, Excel или JSON — получите полный анализ и визуализацию</p>
-    </div>
-""", unsafe_allow_html=True)
-
 # Загрузка API ключа OpenAI из Streamlit Secrets
 if 'OPENAI_API_KEY' in st.secrets:
     openai.api_key = st.secrets['OPENAI_API_KEY']
 else:
     openai.api_key = ""
 
-# Остальной код функций такой же, только убрана логика выбора темы и шаблон для визуализаций всегда светлый
+# Тема приложения - только светлая (убрана возможность выбора)
+st.markdown("""
+    <style>
+        .stApp { background-color: #f0f2f6; }
+        footer { visibility: hidden; }
+    </style>
+""", unsafe_allow_html=True)
 
+# Заголовок
+st.title("🤖 AI Data Analyzer Pro")
+st.markdown("""
+    <div style="background-color:#ffffff;padding:10px;border-radius:10px;margin-bottom:20px;">
+    <p style="color:#333;font-size:18px;">🚀 <b>Автоматический анализ данных с AI-powered инсайтами</b></p>
+    <p style="color:#666;">Загрузите CSV, Excel или JSON — получите полный анализ и визуализацию</p>
+    </div>
+""", unsafe_allow_html=True)
+
+# Кэшированная функция загрузки данных
 @st.cache_data(show_spinner="Загружаю данные... ⏳", ttl=3600, max_entries=3)
 def load_data(uploaded_file):
     try:
@@ -54,6 +61,7 @@ def load_data(uploaded_file):
         st.error(f"Ошибка загрузки: {str(e)}")
         return None
 
+# Оптимизация памяти
 def reduce_mem_usage(df):
     start_mem = df.memory_usage().sum() / 1024**2
     for col in df.columns:
@@ -81,6 +89,7 @@ def reduce_mem_usage(df):
     st.sidebar.info(f"Оптимизация памяти: {start_mem:.2f} MB → {end_mem:.2f} MB (сэкономлено {100*(start_mem-end_mem)/start_mem:.1f}%)")
     return df
 
+# AI анализ данных (описание и статистика)
 @st.cache_data(show_spinner="Анализирую данные... 🔍", ttl=600)
 def analyze_with_ai(df):
     try:
@@ -123,6 +132,7 @@ def analyze_with_ai(df):
     except Exception as e:
         return f"Ошибка анализа: {str(e)}"
 
+# Обнаружение аномалий IsolationForest
 @st.cache_data(show_spinner="Ищу аномалии... 🕵️", ttl=300)
 def detect_anomalies(df, column):
     try:
@@ -139,6 +149,7 @@ def detect_anomalies(df, column):
     except:
         return None
 
+# Анализ временных рядов с декомпозицией
 @st.cache_data(show_spinner="Анализирую временные ряды... ⏳", ttl=300)
 def time_series_analysis(df, date_col, value_col):
     try:
@@ -159,23 +170,24 @@ def time_series_analysis(df, date_col, value_col):
     except:
         return None
 
+# Новая функция: генерация инсайтов и предложения визуализации с разбором JSON
 @st.cache_data(show_spinner="Генерирую AI инсайты и рекомендации... 🤖", ttl=600)
 def generate_ai_insights_and_viz(df):
     if not openai.api_key:
         return "🔑 Ключ OpenAI API не установлен. Добавьте его в Secrets.", None, None, None, None, None, None
 
-    try:
-        prompt = (
-            f"Дай краткий аналитический отчет и рекомендации по данным.\n"
-            f"Данные имеют {df.shape[0]} строк и {df.shape[1]} колонок.\n"
-            f"Колонки: {list(df.columns)}.\n"
-            f"Первые 5 строк:\n{df.head().to_dict()}\n\n"
-            f"Пожалуйста, дай инсайты, рекомендации и предложи один наиболее подходящий тип визуализации из следующих вариантов: "
-            f"Гистограмма, Тепловая карта, 3D Scatter, Временной ряд, Candlestick, Аномалии, Точечная диаграмма.\n"
-            f"Также предложи колонки для осей и других параметров визуализации (x, y, z, color, size), если это применимо.\n"
-            f"Ответь в формате JSON с полями: insights (текст), viz_type, x_axis, y_axis, z_axis, color, size."
-        )
+    prompt = (
+        f"Ты аналитик данных. Сделай краткий аналитический отчет и дай рекомендации по данным.\n"
+        f"Данные: {df.shape[0]} строк, {df.shape[1]} колонок.\n"
+        f"Колонки: {list(df.columns)}.\n"
+        f"Первые 5 строк:\n{df.head().to_dict()}\n\n"
+        f"Напиши инсайты и предложи один тип визуализации из: гистограмма, тепловая карта, 3D scatter, временной ряд, candlestick, аномалии, точечная диаграмма.\n"
+        f"Ответь в JSON формате: "
+        f'{{"insights": "...", "viz_type": "...", "x_axis": "...", "y_axis": "...", "z_axis": "...", "color": "...", "size": "..."}}. '
+        f"Если нет подходящей визуализации, просто 'viz_type' оставь пустым."
+    )
 
+    try:
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
@@ -187,100 +199,17 @@ def generate_ai_insights_and_viz(df):
         )
         text = response['choices'][0]['message']['content']
 
-        parsed = json.loads(text)
+        try:
+            parsed = json.loads(text)
+            insights = parsed.get('insights', '')
+            viz_type = parsed.get('viz_type', None)
+            x_axis = parsed.get('x_axis', None)
+            y_axis = parsed.get('y_axis', None)
+            z_axis = parsed.get('z_axis', None)
+            color = parsed.get('color', None)
+            size = parsed.get('size', None)
+            return insights, viz_type, x_axis, y_axis, z_axis, color, size
 
-        insights = parsed.get('insights', '')
-        viz_type = parsed.get('viz_type', None)
-        x_axis = parsed.get('x_axis', None)
-        y_axis = parsed.get('y_axis', None)
-        z_axis = parsed.get('z_axis', None)
-        color = parsed.get('color', None)
-        size = parsed.get('size', None)
-
-        return insights, viz_type, x_axis, y_axis, z_axis, color, size
-
-    except Exception as e:
-        return f"Ошибка OpenAI: {str(e)}", None, None, None, None, None, None
-
-def create_visualization(df, viz_type, x=None, y=None, z=None, color=None, size=None):
-    try:
-        viz_df = df.sample(min(10000, len(df))) if len(df) > 10000 else df
-
-        if viz_type == "Гистограмма":
-            fig = px.histogram(viz_df, x=x, color=color, marginal="box", nbins=50)
-
-        elif viz_type == "Тепловая карта":
-            corr = viz_df.select_dtypes(include=np.number).corr()
-            fig = px.imshow(corr, text_auto=True, color_continuous_scale='RdBu')
-
-        elif viz_type == "3D Scatter":
-            fig = px.scatter_3d(viz_df, x=x, y=y, z=z, color=color, size=size)
-
-        elif viz_type == "Аномалии":
-            anomalies = detect_anomalies(df, x)
-            fig = px.scatter(viz_df, x=x, y=y, color=viz_df.index.isin(anomalies.index) if anomalies is not None else None)
-
-        elif viz_type == "Временной ряд":
-            if len(viz_df) > 1000 and is_datetime64_any_dtype(viz_df[x]):
-                viz_df = viz_df.set_index(x).resample('D').mean().reset_index()
-            fig = px.line(viz_df, x=x, y=y, color=color)
-            if len(viz_df) > 30:
-                viz_df['rolling'] = viz_df[y].rolling(7).mean()
-                fig.add_trace(go.Scatter(x=viz_df[x], y=viz_df['rolling'], mode='lines', name='Скользящее среднее (7)'))
-
-        elif viz_type == "Candlestick":
-            fig = go.Figure(data=[go.Candlestick(
-                x=viz_df[x],
-                open=viz_df[y],
-                high=viz_df[y] + viz_df[y].std(),
-                low=viz_df[y] - viz_df[y].std(),
-                close=viz_df[y])])
-
-        else:
-            fig = px.scatter(viz_df, x=x, y=y, color=color, size=size)
-
-        fig.update_layout(
-            template="plotly_white",
-            hovermode="x unified",
-            height=600
-        )
-        fig.update_traces(marker=dict(size=5, opacity=0.7))
-
-        return fig
-    except Exception as e:
-        st.error(f"Ошибка визуализации: {e}")
-        return None
-
-uploaded_file = st.file_uploader("📂 Загрузите CSV, Excel или JSON файл", type=['csv', 'xlsx', 'xls', 'json'])
-if uploaded_file is not None:
-    df = load_data(uploaded_file)
-    if df is not None and not df.empty:
-        df = reduce_mem_usage(df)
-
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("AI анализ данных")
-        if st.sidebar.button("Анализировать данные"):
-            with st.spinner("Анализирую..."):
-                analysis_text = analyze_with_ai(df)
-                st.markdown(analysis_text)
-
-        st.sidebar.subheader("AI инсайты и автоматическая визуализация")
-        if st.sidebar.button("Получить AI инсайты и визуализацию"):
-            with st.spinner("Генерирую инсайты и визуализацию..."):
-                insights, viz_type, x_axis, y_axis, z_axis, color, size = generate_ai_insights_and_viz(df)
-                st.markdown(insights)
-                if viz_type is not None:
-                    fig = create_visualization(df, viz_type, x_axis, y_axis, z_axis, color, size)
-                    if fig is not None:
-                        st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("AI не предложил визуализацию.")
-
-        st.sidebar.markdown("---")
-        if st.sidebar.button("Показать исходные данные"):
-            st.dataframe(df)
-
-    else:
-        st.warning("Не удалось загрузить данные из файла или файл пустой.")
-else:
-    st.info("Пожалуйста, загрузите файл для начала анализа.")
+        except json.JSONDecodeError:
+            # Если JSON невалидный, возвращаем просто текст
+            return text, None, None, None, None,
