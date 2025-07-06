@@ -199,21 +199,15 @@ def generate_viz_recommendations(df):
 
     
     prompt = f"""
-Ты — эксперт по визуализации данных. На основе этих колонок данных:
-{list(df.columns)}
+Ты — эксперт по визуализации данных. Посмотри на колонки этих данных: {list(df.columns)}.
+Предложи 3 простые и понятные рекомендации для построения графиков. 
+Пиши по-русски и коротко. Например:
 
-Предложи ровно 3 разных визуализации в формате JSON:
-[
-  {{
-    "viz_type": "scatter",
-    "x_axis": "имя_колонки",
-    "y_axis": "имя_колонки",
-    "color": "имя_колонки или null"
-  }},
-  ...
-]
+- Построй гистограмму для колонки 'Age'
+- Построй scatter plot с 'Height' по оси X и 'Weight' по оси Y
+- Построй box plot для колонки 'Salary'
 
-Если какое-то поле не нужно — укажи null.
+Пиши в таком же формате, без JSON и лишних объяснений.
 """
 
     try:
@@ -223,37 +217,26 @@ def generate_viz_recommendations(df):
                 {"role": "system", "content": "Ты эксперт по визуализации данных."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
-            max_tokens=300,
+            temperature=0.7,
+            max_tokens=300
         )
-        text = response['choices'][0]['message']['content']
-        viz_recs = extract_json_from_text(text)
-        if viz_recs is None:
-            st.error("Не удалось распарсить ответ AI. Вот что он ответил:")
-            st.text(text)
-            return []
-        return viz_recs
+        return response['choices'][0]['message']['content']
     except Exception as e:
-        st.error(f"Ошибка OpenAI API: {e}")
-        return []
+        return f"Ошибка OpenAI API: {e}"
 
-def plot_viz(df, viz):
-    viz_type = viz.get("viz_type")
-    x = viz.get("x_axis")
-    y = viz.get("y_axis")
-    color = viz.get("color")
+st.title("🎨 Рекомендации по визуализациям")
 
-    if viz_type == "scatter" and x in df.columns and y in df.columns:
-        fig = px.scatter(df, x=x, y=y, color=color if color in df.columns else None)
-        st.plotly_chart(fig, use_container_width=True)
-    elif viz_type == "гистограмма" and x in df.columns:
-        fig = px.histogram(df, x=x, color=color if color in df.columns else None)
-        st.plotly_chart(fig, use_container_width=True)
-    elif viz_type == "box" and x in df.columns and y in df.columns:
-        fig = px.box(df, x=x, y=y, color=color if color in df.columns else None)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info(f"Не могу построить визуализацию: {viz}")
+uploaded_file = st.file_uploader("Загрузите CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
+
+if uploaded_file:
+    df = load_data(uploaded_file)
+    if df is not None:
+        st.write("Данные:")
+        st.dataframe(df.head())
+
+        st.subheader("Рекомендации по визуализациям от AI")
+        recommendations = generate_viz_recommendations(df)
+        st.markdown(recommendations)
 
 
 ### --- Streamlit UI ---
