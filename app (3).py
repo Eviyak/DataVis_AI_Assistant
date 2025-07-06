@@ -247,13 +247,6 @@ if uploaded_file:
         st.subheader("🤖 AI Инсайты по данным")
         insights = generate_ai_insights(df)
         st.markdown(insights)
-
-        st.subheader("🎨 Рекомендации по визуализациям")
-        viz_recs = generate_viz_recommendations(df)
-        if viz_recs:
-            st.markdown(viz_recs)
-        else:
-            st.info("Нет рекомендаций по визуализациям.")
     else:
         st.error("Не удалось загрузить данные из файла.")
 else:
