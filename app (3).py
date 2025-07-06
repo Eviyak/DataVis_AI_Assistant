@@ -3,6 +3,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import json
+import io
 from io import BytesIO
 from fpdf import FPDF
 import os
