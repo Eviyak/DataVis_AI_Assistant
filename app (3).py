@@ -207,7 +207,6 @@ def generate_ai_insights_and_viz(df):
     f"Если какой-то тип визуализации не подходит, просто пропусти его."
 )
 
-    )
 
     try:
         response = openai.ChatCompletion.create(
