@@ -36,7 +36,7 @@ def fig_to_bytes(fig):
     buf.seek(0)
     return buf
 
-def generate_pdf_report(df, data_info, stats_info, ai_info, hist_img_buf, boxplot_img_buf):
+pdf_buffer = generate_pdf_report(df, data_info, stats_info, ai_info, hist_buf, boxplot_buf)
     pdf = FPDF()
     # Добавляем шрифты DejaVu (обычный и жирный)
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
