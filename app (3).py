@@ -356,16 +356,19 @@ if uploaded_file:
                         st.metric(label=metric, value=f"{value:.4f}")
                     
                     if st.session_state['problem_type'] == "classification" and st.session_state['cm'] is not None:
-                        st.write("### Матрица ошибок")
-                        fig, ax = plt.subplots()
-                        ConfusionMatrixDisplay.from_predictions(
-                            st.session_state['y_test'], 
-                            st.session_state['y_pred'],
-                            display_labels=["Класс 0", "Класс 1"],
-                            ax=ax,
-                            cmap="Blues"
-                        )
-                        st.pyplot(fig)
+    st.write("### Матрица ошибок")
+    fig, ax = plt.subplots()
+    try:
+        ConfusionMatrixDisplay.from_predictions(
+            st.session_state['y_test'], 
+            st.session_state['y_pred'],
+            display_labels=np.unique(st.session_state['y_test']),  # Автоматически определяем метки классов
+            ax=ax,
+            cmap="Blues"
+        )
+        st.pyplot(fig)
+    except Exception as e:
+        st.error(f"Ошибка при построении матрицы ошибок: {str(e)}")
                 
                 elif ml_task == "Кластеризация":
                     st.write("### Распределение по кластерам")
