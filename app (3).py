@@ -6,15 +6,24 @@ import openai
 import io
 import json
 import warnings
-from sklearn.ensemble import IsolationForest
+from sklearn.ensemble import IsolationForest, RandomForestClassifier, RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, mean_squared_error, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.cluster import KMeans
+import shap
+import matplotlib.pyplot as plt
+import seaborn as sns
+import joblib
+from datetime import datetime
 from pandas.api.types import is_numeric_dtype, is_categorical_dtype
 
 warnings.filterwarnings('ignore')
 
 # Настройки страницы
 st.set_page_config(
-    page_title="InsightBot Pro",
-    page_icon="📊",
+    page_title="DataJournalist ML Assistant",
+    page_icon="📰",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -30,14 +39,15 @@ st.markdown("""
     <style>
         .stApp { background-color: #f0f2f6; color: #000000; }
         footer { visibility: hidden; }
+        .stProgress > div > div > div > div { background: linear-gradient(to right, #ff4b4b, #ff9a9e); }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("InsightBot Pro")
+st.title("📰 DataJournalist ML Assistant")
 st.markdown("""
-    <div style="background-color:#ffffff;padding:10px;border-radius:10px;margin-bottom:20px;">
-    <p style="color:#333;font-size:18px;">🚀 <b>Автоматический анализ данных с AI-powered инсайтами</b></p>
-    <p style="color:#666;">Загрузите CSV, Excel или JSON — получите полный анализ и визуализацию с автоматической очисткой и советами</p>
+    <div style="background-color:#ffffff;padding:20px;border-radius:10px;margin-bottom:20px;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+    <h3 style="color:#333;margin-top:0;">🚀 Автоматизированный анализ данных и ML для журналистов</h3>
+    <p style="color:#666;">Загрузите данные → Выберите задачу → Получите готовую модель и инсайты</p>
     </div>
 """, unsafe_allow_html=True)
 
@@ -107,77 +117,125 @@ def mark_anomalies(df):
     df['anomaly'] = df['anomaly'].map({1: 0, -1: 1})
     return df
 
-def analyze_with_ai(df):
-    try:
-        analysis = f"- **Строки:** {df.shape[0]}\n- **Колонки:** {df.shape[1]}\n- **Объем данных:** {df.memory_usage().sum() / 1024**2:.2f} MB\n\n"
-        num_cols = df.select_dtypes(include=np.number).columns
-        if len(num_cols) > 0:
-            analysis += "### 🔢 Числовые данные\n"
-            stats = df[num_cols].describe().transpose()
-            stats['skew'] = df[num_cols].skew()
-            analysis += stats[['mean', 'std', 'min', '50%', 'max', 'skew']].to_markdown()
-        cat_cols = df.select_dtypes(exclude=np.number).columns
-        if len(cat_cols) > 0:
-            analysis += "\n\n### 🄤 Категориальные данные\n"
-            for col in cat_cols:
-                analysis += f"- **{col}**: {df[col].nunique()} уникальных значений\n"
-        missing = df.isnull().sum()
-        if missing.sum() > 0:
-            analysis += "\n\n### ⚠️ Пропущенные значения\n"
-            missing_percent = missing[missing > 0] / len(df) * 100
-            missing_df = pd.DataFrame({'Колонка': missing_percent.index, 'Пропуски': missing[missing > 0], '%': missing_percent.values.round(1)})
-            analysis += missing_df.to_markdown(index=False)
-        if len(num_cols) > 1:
-            corr = df[num_cols].corr().abs().unstack().sort_values(ascending=False)
-            strong_corr = corr[(corr > 0.7) & (corr < 1)].drop_duplicates()
-            if len(strong_corr) > 0:
-                analysis += "\n\n### 🔗 Сильные корреляции\n"
-                for pair, value in strong_corr.items():
-                    analysis += f"- {pair[0]} и {pair[1]}: {value:.2f}\n"
-        return analysis
-    except Exception as e:
-        return f"Ошибка анализа: {str(e)}"
+def prepare_data_for_ml(df, target_column):
+    # Кодирование категориальных переменных
+    le = LabelEncoder()
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = le.fit_transform(df[col].astype(str))
+    
+    # Разделение на признаки и целевую переменную
+    X = df.drop(columns=[target_column])
+    y = df[target_column]
+    
+    # Масштабирование признаков
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    return X_scaled, y, scaler
 
-def generate_ai_insights(df):
+def train_model(X, y, problem_type):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    if problem_type == "classification":
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model_name = "Random Forest (Классификация)"
+    else:
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model_name = "Random Forest (Регрессия)"
+    
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    
+    if problem_type == "classification":
+        accuracy = accuracy_score(y_test, y_pred)
+        cm = confusion_matrix(y_test, y_pred)
+        metrics = {"Точность": accuracy}
+    else:
+        mse = mean_squared_error(y_test, y_pred)
+        rmse = np.sqrt(mse)
+        metrics = {"RMSE": rmse, "MSE": mse}
+    
+    return model, metrics, X_test, y_test, y_pred, cm
+
+def generate_shap_plot(model, X, feature_names):
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
+    
+    if isinstance(shap_values, list):  # Для классификации
+        shap.summary_plot(shap_values[1], X, feature_names=feature_names, show=False)
+    else:  # Для регрессии
+        shap.summary_plot(shap_values, X, feature_names=feature_names, show=False)
+    
+    plt.tight_layout()
+    return plt.gcf()
+
+def generate_ai_report(df, model, problem_type, target, metrics):
     if not openai.api_key:
         return "🔑 Ключ OpenAI API не установлен. Добавьте его в Secrets."
-    prompt = (
-        f"Ты аналитик данных. Сделай краткий аналитический отчет по данным.\n"
-        f"Данные: {df.shape[0]} строк, {df.shape[1]} колонок.\n"
-        f"Колонки: {list(df.columns)}.\n"
-        f"Первые 5 строк:\n{df.head().to_dict()}\n\n"
-        f"Дай краткие инсайты и рекомендации по данным."
-    )
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Ты аналитик данных."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=1000
-        )
-        return response['choices'][0]['message']['content']
-    except Exception as e:
-        return f"Ошибка вызова OpenAI API: {str(e)}"
-
-def generate_viz_recommendations(df):
-    if not openai.api_key:
-        return None
+    
     prompt = f"""
-Ты — эксперт по визуализации данных. Посмотри на колонки этих данных: {list(df.columns)}.
-Предложи 3 простые и понятные рекомендации для построения графиков. 
-Пиши по-русски и коротко. Например:
-- Построй гистограмму для колонки 'Age'
-- Построй scatter plot с 'Height' по оси X и 'Weight' по оси Y
-- Построй box plot для колонки 'Salary'
+Ты - журналист-аналитик с опытом в data science. Подготовь отчет о результатах анализа данных и построенной модели машинного обучения.
+
+Данные:
+- Количество наблюдений: {df.shape[0]}
+- Количество признаков: {df.shape[1]}
+- Целевая переменная: {target}
+- Тип задачи: {'Классификация' if problem_type == 'classification' else 'Регрессия'}
+
+Метрики модели:
+{json.dumps(metrics, indent=2)}
+
+Важные переменные (первые 5):
+{df.columns.tolist()[:5]}
+
+Сгенерируй:
+1. Простое объяснение что делает модель
+2. Ключевые инсайты о важных признаках
+3. Как журналист может использовать эти результаты в статье
+4. Ограничения анализа
+5. Рекомендации по дальнейшему исследованию
+
+Пиши кратко, понятно, без технического жаргона. Используй маркированные списки.
 """
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Ты эксперт по визуализации данных."},
+                {"role": "system", "content": "Ты журналист-аналитик, объясняющий сложные ML-концепты простым языком."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.6,
+            max_tokens=1500
+        )
+        return response['choices'][0]['message']['content']
+    except Exception as e:
+        return f"Ошибка вызова OpenAI API: {str(e)}"
+
+def generate_flourish_recommendations(df, target):
+    if not openai.api_key:
+        return None
+    
+    prompt = f"""
+На основе данных с колонками: {list(df.columns)} и целевой переменной '{target}', 
+предложи 3 оптимальных типа визуализаций для Flourish. Для каждого укажи:
+
+1. Тип визуализации
+2. Какие колонки использовать
+3. Почему это будет эффективно
+4. Рекомендации по настройке во Flourish
+
+Пример ответа:
+- **Тип**: Интерактивная карта
+  **Колонки**: Регион, {target}
+  **Обоснование**: Позволяет показать географическое распределение показателя
+  **Настройки**: Использовать российские регионы в формате GeoJSON
+"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Ты эксперт по визуализации данных для журналистики."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
@@ -187,50 +245,282 @@ def generate_viz_recommendations(df):
     except Exception as e:
         return f"Ошибка OpenAI API: {e}"
 
-# === UI ===
-st.sidebar.header("Загрузите файл с данными")
+def cluster_data(df, n_clusters):
+    # Выбор только числовых колонок
+    numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+    
+    if not numeric_cols:
+        return df, "Нет числовых колонок для кластеризации"
+    
+    # Масштабирование данных
+    scaler = StandardScaler()
+    scaled_data = scaler.fit_transform(df[numeric_cols])
+    
+    # Кластеризация
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    clusters = kmeans.fit_predict(scaled_data)
+    
+    # Добавление меток кластеров
+    df['Cluster'] = clusters
+    
+    # Анализ кластеров
+    cluster_analysis = df.groupby('Cluster')[numeric_cols].mean().reset_index()
+    
+    return df, cluster_analysis
+
+# === Основной интерфейс ===
+st.sidebar.header("1. Загрузите данные")
 uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
+
+df = None
+df_clean = None
 
 if uploaded_file:
     df = load_data(uploaded_file)
     if df is not None:
         df = reduce_mem_usage(df)
-        st.success(f"Файл загружен: {uploaded_file.name} ({df.shape[0]} строк, {df.shape[1]} колонок)")
-
-        st.subheader("\ud83d\udcc4 Предварительный просмотр данных")
-        st.dataframe(df.head())
-
-        with st.spinner("\ud83e\uddfc Автоматически очищаю данные..."):
+        st.sidebar.success(f"Файл загружен: {uploaded_file.name}")
+        
+        with st.expander("🔍 Предварительный просмотр данных", expanded=True):
+            st.dataframe(df.head(3))
+            st.caption(f"Загружено {df.shape[0]} строк, {df.shape[1]} колонок")
+        
+        # Автоматическая очистка данных
+        with st.spinner("🧹 Автоматически очищаю данные..."):
             df_clean = fill_missing_values(df)
             df_clean = mark_anomalies(df_clean)
+        
+        st.success("✅ Данные очищены! Добавлен столбец 'anomaly' для аномалий")
+        
+        # Кнопки экспорта
+        col1, col2 = st.columns(2)
+        with col1:
+            csv = df_clean.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Скачать CSV для Flourish",
+                data=csv,
+                file_name=f"cleaned_data_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                help="Оптимизированный формат для загрузки в Flourish"
+            )
+        with col2:
+            json_data = df_clean.to_json(orient='records', force_ascii=False)
+            st.download_button(
+                label="📥 Скачать JSON для Flourish",
+                data=json_data,
+                file_name=f"cleaned_data_{datetime.now().strftime('%Y%m%d')}.json",
+                mime="application/json",
+                help="Формат JSON для сложных визуализаций"
+            )
+        
+        st.sidebar.header("2. Выберите задачу ML")
+        ml_task = st.sidebar.selectbox("Тип задачи", 
+                                     ["Прогнозирование (регрессия)", 
+                                      "Классификация", 
+                                      "Кластеризация"],
+                                     index=0)
+        
+        st.sidebar.header("3. Настройте параметры")
+        
+        if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
+            target_col = st.sidebar.selectbox("Выберите целевую переменную", df_clean.columns)
+            
+            if st.sidebar.button("▶ Обучить модель", type="primary"):
+                with st.spinner("🔄 Обучение модели..."):
+                    problem_type = "regression" if ml_task == "Прогнозирование (регрессия)" else "classification"
+                    
+                    # Подготовка данных
+                    X, y, scaler = prepare_data_for_ml(df_clean, target_col)
+                    
+                    # Обучение модели
+                    model, metrics, X_test, y_test, y_pred, cm = train_model(X, y, problem_type)
+                    
+                    # Сохранение состояния
+                    st.session_state['model'] = model
+                    st.session_state['metrics'] = metrics
+                    st.session_state['X_test'] = X_test
+                    st.session_state['y_test'] = y_test
+                    st.session_state['y_pred'] = y_pred
+                    st.session_state['cm'] = cm
+                    st.session_state['feature_names'] = df_clean.drop(columns=[target_col]).columns.tolist()
+                    st.session_state['target'] = target_col
+                    st.session_state['problem_type'] = problem_type
+                    st.session_state['df'] = df_clean
+                    
+                    st.success("✅ Модель успешно обучена!")
+        
+        elif ml_task == "Кластеризация":
+            n_clusters = st.sidebar.slider("Количество кластеров", 2, 10, 4)
+            
+            if st.sidebar.button("▶ Выполнить кластеризацию", type="primary"):
+                with st.spinner("🔍 Выполняю кластеризацию..."):
+                    df_clustered, cluster_analysis = cluster_data(df_clean, n_clusters)
+                    
+                    st.session_state['df_clustered'] = df_clustered
+                    st.session_state['cluster_analysis'] = cluster_analysis
+                    
+                    st.success(f"✅ Данные разбиты на {n_clusters} кластеров!")
+        
+        # Вкладки для вывода результатов
+        if 'model' in st.session_state or 'df_clustered' in st.session_state:
+            tab1, tab2, tab3, tab4 = st.tabs(["📊 Результаты", "📈 Визуализации", "📝 Журналистский отчет", "⚙️ Настройки"])
+            
+            with tab1:
+                st.subheader("Результаты анализа")
+                
+                if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
+                    st.write("### Метрики модели")
+                    for metric, value in st.session_state['metrics'].items():
+                        st.metric(label=metric, value=f"{value:.4f}")
+                    
+                    if st.session_state['problem_type'] == "classification":
+                        st.write("### Матрица ошибок")
+                        fig, ax = plt.subplots()
+                        ConfusionMatrixDisplay.from_predictions(
+                            st.session_state['y_test'], 
+                            st.session_state['y_pred'],
+                            display_labels=["Класс 0", "Класс 1"],
+                            ax=ax,
+                            cmap="Blues"
+                        )
+                        st.pyplot(fig)
+                
+                elif ml_task == "Кластеризация":
+                    st.write("### Распределение по кластерам")
+                    cluster_counts = st.session_state['df_clustered']['Cluster'].value_counts().sort_index()
+                    st.bar_chart(cluster_counts)
+                    
+                    st.write("### Характеристики кластеров")
+                    st.dataframe(st.session_state['cluster_analysis'])
+                    
+                    # Визуализация кластеров
+                    if len(df_clean.select_dtypes(include=np.number).columns) >= 2:
+                        num_cols = df_clean.select_dtypes(include=np.number).columns.tolist()
+                        col1, col2 = st.selectbox("Выберите ось X", num_cols, index=0), st.selectbox("Выберите ось Y", num_cols, index=1)
+                        
+                        fig = px.scatter(
+                            st.session_state['df_clustered'],
+                            x=col1,
+                            y=col2,
+                            color='Cluster',
+                            hover_data=df_clean.columns.tolist(),
+                            title="Визуализация кластеров"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+            
+            with tab2:
+                st.subheader("Визуализация результатов")
+                
+                if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
+                    # SHAP визуализация
+                    st.write("### Важность признаков (SHAP)")
+                    with st.spinner("Генерирую SHAP-визуализацию..."):
+                        fig = generate_shap_plot(
+                            st.session_state['model'],
+                            st.session_state['X_test'],
+                            st.session_state['feature_names']
+                        )
+                        st.pyplot(fig)
+                    
+                    # Прогнозы vs фактические значения
+                    if st.session_state['problem_type'] == "regression":
+                        st.write("### Прогнозы vs Фактические значения")
+                        results = pd.DataFrame({
+                            'Фактические': st.session_state['y_test'],
+                            'Прогнозные': st.session_state['y_pred']
+                        })
+                        fig = px.scatter(
+                            results, 
+                            x='Фактические', 
+                            y='Прогнозные',
+                            trendline='ols',
+                            title="Сравнение прогнозов и фактических значений"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+            
+            with tab3:
+                st.subheader("Журналистский отчет")
+                
+                if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
+                    # Генерация отчета
+                    report = generate_ai_report(
+                        st.session_state['df'],
+                        st.session_state['model'],
+                        st.session_state['problem_type'],
+                        st.session_state['target'],
+                        st.session_state['metrics']
+                    )
+                    st.markdown(report)
+                    
+                    st.divider()
+                    
+                    # Рекомендации по визуализации
+                    st.write("### Рекомендации для Flourish")
+                    flourish_recs = generate_flourish_recommendations(
+                        st.session_state['df'],
+                        st.session_state['target']
+                    )
+                    st.markdown(flourish_recs)
+                
+                elif ml_task == "Кластеризация":
+                    st.write("### Интерпретация кластеров")
+                    cluster_summary = st.session_state['cluster_analysis'].to_dict()
+                    prompt = f"""
+Проанализируй характеристики кластеров и предложи интерпретацию для журналиста:
 
-        st.success("\u2705 Данные автоматически очищены! Добавлен столбец 'anomaly' (1 — аномалия, 0 — норма).")
-        st.subheader("\ud83d\udccb Очищенные данные (первые 20 строк)")
-        st.dataframe(df_clean.head(20))
+Характеристики кластеров:
+{cluster_summary}
 
-        to_download = df_clean.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="\ud83d\udcc5 Скачать очищенные данные (CSV)",
-            data=to_download,
-            file_name="cleaned_data.csv",
-            mime="text/csv"
-        )
-
-        st.subheader("\ud83d\udcca Общий анализ очищенных данных")
-        summary = analyze_with_ai(df_clean)
-        st.markdown(summary)
-
-        st.subheader("\ud83e\udd16 AI Инсайты по очищенным данным")
-        insights = generate_ai_insights(df_clean)
-        st.markdown(insights)
-
-        st.subheader("\ud83c\udfa8 Рекомендации по визуализациям")
-        viz_recs = generate_viz_recommendations(df_clean)
-        if viz_recs:
-            st.markdown(viz_recs)
+Сгенерируй:
+1. Краткое описание каждого кластера
+2. Как можно назвать каждый кластер
+3. Идеи для статей на основе кластерного анализа
+"""
+                    try:
+                        response = openai.ChatCompletion.create(
+                            model="gpt-4o-mini",
+                            messages=[
+                                {"role": "system", "content": "Ты журналист-аналитик, специализирующийся на кластерном анализе."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.7,
+                            max_tokens=1500
+                        )
+                        st.markdown(response['choices'][0]['message']['content'])
+                    except Exception as e:
+                        st.error(f"Ошибка OpenAI API: {e}")
+            
+            with tab4:
+                st.subheader("Настройки модели")
+                
+                if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
+                    # Скачивание модели
+                    st.write("### Экспорт модели")
+                    model_bytes = joblib.dumps(st.session_state['model'])
+                    st.download_button(
+                        label="💾 Скачать модель (joblib)",
+                        data=model_bytes,
+                        file_name=f"model_{datetime.now().strftime('%Y%m%d')}.joblib",
+                        mime="application/octet-stream"
+                    )
+                    
+                    # Пример данных для прогноза
+                    st.write("### Тестовый прогноз")
+                    sample = df_clean.drop(columns=[st.session_state['target']]).iloc[0:1]
+                    st.write("Данные для прогноза:")
+                    st.dataframe(sample)
+                    
+                    if st.button("Сделать прогноз"):
+                        sample_prepared = prepare_data_for_ml(sample, st.session_state['target'])[0]
+                        prediction = st.session_state['model'].predict(sample_prepared)
+                        st.metric(label="Прогноз", value=prediction[0])
+        
         else:
-            st.info("Нет рекомендаций по визуализациям.")
+            st.info("👆 Настройте параметры и нажмите 'Обучить модель'")
+    
     else:
         st.error("Не удалось загрузить данные из файла.")
 else:
-    st.info("\ud83d\udcc1 Пожалуйста, загрузите файл для анализа.")
+    st.info("👈 Пожалуйста, загрузите файл для начала анализа")
+    st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?ixlib=rb-1.2.1&auto=format&fit=crop&w=1200&q=80", 
+             caption="Инструмент для журналистских расследований на основе данных")
