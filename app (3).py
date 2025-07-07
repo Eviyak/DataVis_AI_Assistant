@@ -58,7 +58,7 @@ def load_data(uploaded_file):
         if uploaded_file.name.endswith('.csv'):
             return pd.read_csv(io.BytesIO(file_bytes), encoding_errors='ignore')
         elif uploaded_file.name.endswith(('.xlsx', '.xls')):
-            return pd.read_excel(io.BytesIO(file_bytes))
+            return pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl')
         elif uploaded_file.name.endswith('.json'):
             data = json.loads(file_bytes.decode('utf-8'))
             return pd.json_normalize(data)
@@ -136,22 +136,21 @@ def prepare_data_for_ml(df, target_column):
 
 def train_model(X, y, problem_type):
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    cm = None  # Инициализация переменной cm
     
     if problem_type == "classification":
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         model_name = "Random Forest (Классификация)"
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        cm = confusion_matrix(y_test, y_pred)  # Только для классификации
+        metrics = {"Точность": accuracy}
     else:
         model = RandomForestRegressor(n_estimators=100, random_state=42)
         model_name = "Random Forest (Регрессия)"
-    
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    
-    if problem_type == "classification":
-        accuracy = accuracy_score(y_test, y_pred)
-        cm = confusion_matrix(y_test, y_pred)
-        metrics = {"Точность": accuracy}
-    else:
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
         mse = mean_squared_error(y_test, y_pred)
         rmse = np.sqrt(mse)
         metrics = {"RMSE": rmse, "MSE": mse}
@@ -200,7 +199,7 @@ def generate_ai_report(df, model, problem_type, target, metrics):
 """
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Ты журналист-аналитик, объясняющий сложные ML-концепты простым языком."},
                 {"role": "user", "content": prompt}
@@ -233,7 +232,7 @@ def generate_flourish_recommendations(df, target):
 """
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Ты эксперт по визуализации данных для журналистики."},
                 {"role": "user", "content": prompt}
@@ -246,24 +245,18 @@ def generate_flourish_recommendations(df, target):
         return f"Ошибка OpenAI API: {e}"
 
 def cluster_data(df, n_clusters):
-    # Выбор только числовых колонок
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
     
     if not numeric_cols:
         return df, "Нет числовых колонок для кластеризации"
     
-    # Масштабирование данных
     scaler = StandardScaler()
     scaled_data = scaler.fit_transform(df[numeric_cols])
     
-    # Кластеризация
     kmeans = KMeans(n_clusters=n_clusters, random_state=42)
     clusters = kmeans.fit_predict(scaled_data)
     
-    # Добавление меток кластеров
     df['Cluster'] = clusters
-    
-    # Анализ кластеров
     cluster_analysis = df.groupby('Cluster')[numeric_cols].mean().reset_index()
     
     return df, cluster_analysis
@@ -285,14 +278,12 @@ if uploaded_file:
             st.dataframe(df.head(3))
             st.caption(f"Загружено {df.shape[0]} строк, {df.shape[1]} колонок")
         
-        # Автоматическая очистка данных
         with st.spinner("🧹 Автоматически очищаю данные..."):
             df_clean = fill_missing_values(df)
             df_clean = mark_anomalies(df_clean)
         
         st.success("✅ Данные очищены! Добавлен столбец 'anomaly' для аномалий")
         
-        # Кнопки экспорта
         col1, col2 = st.columns(2)
         with col1:
             csv = df_clean.to_csv(index=False).encode('utf-8')
@@ -329,13 +320,9 @@ if uploaded_file:
                 with st.spinner("🔄 Обучение модели..."):
                     problem_type = "regression" if ml_task == "Прогнозирование (регрессия)" else "classification"
                     
-                    # Подготовка данных
                     X, y, scaler = prepare_data_for_ml(df_clean, target_col)
-                    
-                    # Обучение модели
                     model, metrics, X_test, y_test, y_pred, cm = train_model(X, y, problem_type)
                     
-                    # Сохранение состояния
                     st.session_state['model'] = model
                     st.session_state['metrics'] = metrics
                     st.session_state['X_test'] = X_test
@@ -361,7 +348,6 @@ if uploaded_file:
                     
                     st.success(f"✅ Данные разбиты на {n_clusters} кластеров!")
         
-        # Вкладки для вывода результатов
         if 'model' in st.session_state or 'df_clustered' in st.session_state:
             tab1, tab2, tab3, tab4 = st.tabs(["📊 Результаты", "📈 Визуализации", "📝 Журналистский отчет", "⚙️ Настройки"])
             
@@ -373,7 +359,7 @@ if uploaded_file:
                     for metric, value in st.session_state['metrics'].items():
                         st.metric(label=metric, value=f"{value:.4f}")
                     
-                    if st.session_state['problem_type'] == "classification":
+                    if st.session_state['problem_type'] == "classification" and st.session_state['cm'] is not None:
                         st.write("### Матрица ошибок")
                         fig, ax = plt.subplots()
                         ConfusionMatrixDisplay.from_predictions(
@@ -393,7 +379,6 @@ if uploaded_file:
                     st.write("### Характеристики кластеров")
                     st.dataframe(st.session_state['cluster_analysis'])
                     
-                    # Визуализация кластеров
                     if len(df_clean.select_dtypes(include=np.number).columns) >= 2:
                         num_cols = df_clean.select_dtypes(include=np.number).columns.tolist()
                         col1, col2 = st.selectbox("Выберите ось X", num_cols, index=0), st.selectbox("Выберите ось Y", num_cols, index=1)
@@ -412,7 +397,6 @@ if uploaded_file:
                 st.subheader("Визуализация результатов")
                 
                 if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
-                    # SHAP визуализация
                     st.write("### Важность признаков (SHAP)")
                     with st.spinner("Генерирую SHAP-визуализацию..."):
                         fig = generate_shap_plot(
@@ -422,7 +406,6 @@ if uploaded_file:
                         )
                         st.pyplot(fig)
                     
-                    # Прогнозы vs фактические значения
                     if st.session_state['problem_type'] == "regression":
                         st.write("### Прогнозы vs Фактические значения")
                         results = pd.DataFrame({
@@ -442,7 +425,6 @@ if uploaded_file:
                 st.subheader("Журналистский отчет")
                 
                 if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
-                    # Генерация отчета
                     report = generate_ai_report(
                         st.session_state['df'],
                         st.session_state['model'],
@@ -454,8 +436,6 @@ if uploaded_file:
                     
                     st.divider()
                     
-                    # Рекомендации по визуализации
-                    st.write("### Рекомендации для Flourish")
                     flourish_recs = generate_flourish_recommendations(
                         st.session_state['df'],
                         st.session_state['target']
@@ -478,7 +458,7 @@ if uploaded_file:
 """
                     try:
                         response = openai.ChatCompletion.create(
-                            model="gpt-4o-mini",
+                            model="gpt-3.5-turbo",
                             messages=[
                                 {"role": "system", "content": "Ты журналист-аналитик, специализирующийся на кластерном анализе."},
                                 {"role": "user", "content": prompt}
@@ -494,8 +474,6 @@ if uploaded_file:
                 st.subheader("Настройки модели")
                 
                 if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
-                    # Скачивание модели
-                    st.write("### Экспорт модели")
                     model_bytes = joblib.dumps(st.session_state['model'])
                     st.download_button(
                         label="💾 Скачать модель (joblib)",
@@ -504,7 +482,6 @@ if uploaded_file:
                         mime="application/octet-stream"
                     )
                     
-                    # Пример данных для прогноза
                     st.write("### Тестовый прогноз")
                     sample = df_clean.drop(columns=[st.session_state['target']]).iloc[0:1]
                     st.write("Данные для прогноза:")
