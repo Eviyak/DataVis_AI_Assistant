@@ -83,12 +83,19 @@ def reduce_mem_usage(df):
                 else:
                     df[col] = df[col].astype(np.int64)
             else:
-                if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
-                    df[col] = df[col].astype(np.float16)
-                elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
-                    df[col] = df[col].astype(np.float32)
-                else:
-                    df[col] = df[col].astype(np.float64)
+                # Добавляем проверку на наличие числовых значений
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    try:
+                        if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
+                            df[col] = df[col].astype(np.float16)
+                        elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                            df[col] = df[col].astype(np.float32)
+                        else:
+                            df[col] = df[col].astype(np.float64)
+                    except:
+                        # Если возникает ошибка сравнения, оставляем исходный тип
+                        df[col] = df[col].astype(np.float64)
+    
     end_mem = df.memory_usage().sum() / 1024**2
     st.sidebar.info(f"Оптимизация памяти: {start_mem:.2f} MB → {end_mem:.2f} MB (сэкономлено {100*(start_mem-end_mem)/start_mem:.1f}%)")
     return df
