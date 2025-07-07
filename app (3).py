@@ -156,7 +156,7 @@ def generate_ai_insights(df):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=400
+            max_tokens=1000
         )
         return response['choices'][0]['message']['content']
     except Exception as e:
@@ -181,7 +181,7 @@ def generate_viz_recommendations(df):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=300
+            max_tokens=1000
         )
         return response['choices'][0]['message']['content']
     except Exception as e:
