@@ -202,7 +202,7 @@ def generate_ai_report(df, model, problem_type, target, metrics):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.6,
-            max_tokens=1500
+            max_tokens=500
         )
         return response['choices'][0]['message']['content']
     except Exception as e:
@@ -235,7 +235,7 @@ def generate_flourish_recommendations(df, target):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=1000
+            max_tokens=300
         )
         return response['choices'][0]['message']['content']
     except Exception as e:
