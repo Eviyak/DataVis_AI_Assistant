@@ -188,6 +188,35 @@ def generate_viz_recommendations(df):
     except Exception as e:
         return f"Ошибка OpenAI API: {e}"
 
+# --- NEW: функция очистки данных ---
+def clean_data(df):
+    df_clean = df.copy()
+
+    # Заполнение пропусков: числовые - медианой, категориальные - модой или "Unknown"
+    for col in df_clean.columns:
+        if df_clean[col].isnull().sum() > 0:
+            if pd.api.types.is_numeric_dtype(df_clean[col]):
+                median_val = df_clean[col].median()
+                df_clean[col].fillna(median_val, inplace=True)
+            else:
+                mode_val = df_clean[col].mode()
+                if not mode_val.empty:
+                    df_clean[col].fillna(mode_val[0], inplace=True)
+                else:
+                    df_clean[col].fillna("Unknown", inplace=True)
+
+    # Выделение аномалий через IsolationForest (только для числовых колонок)
+    num_cols = df_clean.select_dtypes(include=np.number).columns.tolist()
+    if num_cols:
+        iso_forest = IsolationForest(contamination=0.01, random_state=42)
+        preds = iso_forest.fit_predict(df_clean[num_cols])
+        df_clean['anomaly'] = preds
+        df_clean['anomaly'] = df_clean['anomaly'].map({1: 'normal', -1: 'anomaly'})
+    else:
+        df_clean['anomaly'] = 'no numeric data'
+
+    return df_clean
+
 # === UI ===
 st.sidebar.header("Загрузите файл с данными")
 uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
@@ -199,20 +228,38 @@ if uploaded_file:
         st.success(f"Файл загружен: {uploaded_file.name} ({df.shape[0]} строк, {df.shape[1]} колонок)")
         st.dataframe(df.head())
 
+        # Автоматическая очистка данных (NEW)
+        st.subheader("🧹 Очищенные данные (заполнение пропусков, пометка аномалий)")
+        df_clean = clean_data(df)
+        st.dataframe(df_clean.head())
+
+        st.markdown(f"Количество строк с аномалиями: {(df_clean['anomaly'] == 'anomaly').sum()}")
+
         st.subheader("📊 Общий анализ данных")
-        summary = analyze_with_ai(df)
+        summary = analyze_with_ai(df_clean)  # анализируем очищенный датафрейм
         st.markdown(summary)
 
         st.subheader("🤖 AI Инсайты по данным")
-        insights = generate_ai_insights(df)
+        insights = generate_ai_insights(df_clean)
         st.markdown(insights)
 
         st.subheader("🎨 Рекомендации по визуализациям")
-        viz_recs = generate_viz_recommendations(df)
+        viz_recs = generate_viz_recommendations(df_clean)
         if viz_recs:
             st.markdown(viz_recs)
         else:
             st.info("Нет рекомендаций по визуализациям.")
+
+        # NEW: Кнопка скачивания очищенного файла
+        csv_buffer = io.StringIO()
+        df_clean.to_csv(csv_buffer, index=False)
+        st.download_button(
+            label="Скачать очищенный CSV для Flourish и др.",
+            data=csv_buffer.getvalue(),
+            file_name="cleaned_data.csv",
+            mime="text/csv"
+        )
+
     else:
         st.error("Не удалось загрузить данные из файла.")
 else:
