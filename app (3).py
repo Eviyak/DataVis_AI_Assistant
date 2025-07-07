@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import openai
 import io
 import json
 import warnings
+import requests
 from sklearn.ensemble import IsolationForest, RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_squared_error, confusion_matrix, ConfusionMatrixDisplay
@@ -28,11 +28,39 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Загрузка API ключа OpenAI
-if 'OPENAI_API_KEY' in st.secrets:
-    openai.api_key = st.secrets['OPENAI_API_KEY']
-else:
-    openai.api_key = st.sidebar.text_input("Введите OpenAI API ключ:", type="password")
+# Конфигурация моделей
+MODEL_CONFIG = {
+    "huggingface": {
+        "api_url": "https://api-inference.huggingface.co/models/",
+        "models": {
+            "llama2-7b": "meta-llama/Llama-2-7b-chat-hf",
+            "mistral-7b": "mistralai/Mistral-7B-Instruct-v0.1"
+        },
+        "headers": {}
+    },
+    "local": {
+        "api_url": "http://localhost:8080/v1/chat/completions",
+        "models": {
+            "llama2-7b": "local-llama2"
+        },
+        "headers": {
+            "Content-Type": "application/json"
+        }
+    }
+}
+
+# Выбор модели в сайдбаре
+st.sidebar.header("Настройки AI")
+ai_provider = st.sidebar.selectbox("AI провайдер", ["huggingface", "local"], index=0)
+selected_model = st.sidebar.selectbox("Модель", list(MODEL_CONFIG[ai_provider]["models"].keys()), index=0)
+
+if ai_provider == "huggingface":
+    if 'HUGGINGFACE_API_KEY' in st.secrets:
+        MODEL_CONFIG[ai_provider]["headers"]["Authorization"] = f"Bearer {st.secrets['HUGGINGFACE_API_KEY']}"
+    else:
+        huggingface_api_key = st.sidebar.text_input("Введите HuggingFace API ключ:", type="password")
+        if huggingface_api_key:
+            MODEL_CONFIG[ai_provider]["headers"]["Authorization"] = f"Bearer {huggingface_api_key}"
 
 # Стилизация
 st.markdown("""
@@ -83,7 +111,6 @@ def reduce_mem_usage(df):
                 else:
                     df[col] = df[col].astype(np.int64)
             else:
-                # Добавляем проверку на наличие числовых значений
                 if pd.api.types.is_numeric_dtype(df[col]):
                     try:
                         if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
@@ -93,7 +120,6 @@ def reduce_mem_usage(df):
                         else:
                             df[col] = df[col].astype(np.float64)
                     except:
-                        # Если возникает ошибка сравнения, оставляем исходный тип
                         df[col] = df[col].astype(np.float64)
     
     end_mem = df.memory_usage().sum() / 1024**2
@@ -126,11 +152,9 @@ def mark_anomalies(df):
     X = np.nan_to_num(X)
     
     try:
-        # Инициализируем и обучаем модель
         iso = IsolationForest(contamination=0.05, random_state=42)
         preds = iso.fit_predict(X)
         
-        # Добавляем метки аномалий в DataFrame
         df_processed['anomaly'] = preds
         df_processed['anomaly'] = df_processed['anomaly'].map({1: 0, -1: 1})
         
@@ -189,9 +213,6 @@ def generate_shap_plot(model, X, feature_names):
     return plt.gcf()
 
 def generate_ai_report(df, model, problem_type, target, metrics):
-    if not openai.api_key:
-        return "🔑 Ключ OpenAI API не установлен. Добавьте его в настройках."
-    
     prompt = f"""
 Ты - журналист-аналитик с опытом в data science. Подготовь отчет о результатах анализа данных и построенной модели машинного обучения.
 
@@ -216,24 +237,54 @@ def generate_ai_report(df, model, problem_type, target, metrics):
 
 Пиши кратко, понятно, без технического жаргона. Используй маркированные списки.
 """
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Ты журналист-аналитик, объясняющий сложные ML-концепты простым языком."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.6,
-            max_tokens=1500
-        )
-        return response['choices'][0]['message']['content']
-    except Exception as e:
-        return f"Ошибка вызова OpenAI API: {str(e)}"
+    
+    if ai_provider == "huggingface":
+        if "Authorization" not in MODEL_CONFIG[ai_provider]["headers"]:
+            return "🔑 HuggingFace API ключ не установлен. Добавьте его в настройках."
+        
+        model_name = MODEL_CONFIG[ai_provider]["models"][selected_model]
+        api_url = f"{MODEL_CONFIG[ai_provider]['api_url']}{model_name}"
+        
+        try:
+            response = requests.post(
+                api_url,
+                headers=MODEL_CONFIG[ai_provider]["headers"],
+                json={"inputs": prompt}
+            )
+            
+            if response.status_code == 200:
+                return response.json()[0]['generated_text']
+            else:
+                return f"Ошибка API: {response.status_code} - {response.text}"
+        except Exception as e:
+            return f"Ошибка вызова HuggingFace API: {str(e)}"
+    
+    elif ai_provider == "local":
+        try:
+            response = requests.post(
+                MODEL_CONFIG[ai_provider]["api_url"],
+                headers=MODEL_CONFIG[ai_provider]["headers"],
+                json={
+                    "model": selected_model,
+                    "messages": [
+                        {"role": "system", "content": "Ты журналист-аналитик, объясняющий сложные ML-концепты простым языком."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.6,
+                    "max_tokens": 1500
+                }
+            )
+            
+            if response.status_code == 200:
+                return response.json()['choices'][0]['message']['content']
+            else:
+                return f"Ошибка локального API: {response.status_code} - {response.text}"
+        except Exception as e:
+            return f"Ошибка вызова локального API: {str(e)}"
+    
+    return "Неизвестный провайдер AI"
 
 def generate_flourish_recommendations(df, target):
-    if not openai.api_key:
-        return None
-    
     prompt = f"""
 На основе данных с колонками: {list(df.columns)} и целевой переменной '{target}', 
 предложи 3 оптимальных типа визуализаций для Flourish. Для каждого укажи:
@@ -249,19 +300,52 @@ def generate_flourish_recommendations(df, target):
   **Обоснование**: Позволяет показать географическое распределение показателя
   **Настройки**: Использовать российские регионы в формате GeoJSON
 """
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Ты эксперт по визуализации данных для журналистики."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=1000
-        )
-        return response['choices'][0]['message']['content']
-    except Exception as e:
-        return f"Ошибка OpenAI API: {e}"
+    
+    if ai_provider == "huggingface":
+        if "Authorization" not in MODEL_CONFIG[ai_provider]["headers"]:
+            return None
+        
+        model_name = MODEL_CONFIG[ai_provider]["models"][selected_model]
+        api_url = f"{MODEL_CONFIG[ai_provider]['api_url']}{model_name}"
+        
+        try:
+            response = requests.post(
+                api_url,
+                headers=MODEL_CONFIG[ai_provider]["headers"],
+                json={"inputs": prompt}
+            )
+            
+            if response.status_code == 200:
+                return response.json()[0]['generated_text']
+            else:
+                return f"Ошибка API: {response.status_code} - {response.text}"
+        except Exception as e:
+            return f"Ошибка HuggingFace API: {e}"
+    
+    elif ai_provider == "local":
+        try:
+            response = requests.post(
+                MODEL_CONFIG[ai_provider]["api_url"],
+                headers=MODEL_CONFIG[ai_provider]["headers"],
+                json={
+                    "model": selected_model,
+                    "messages": [
+                        {"role": "system", "content": "Ты эксперт по визуализации данных для журналистики."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 1000
+                }
+            )
+            
+            if response.status_code == 200:
+                return response.json()['choices'][0]['message']['content']
+            else:
+                return f"Ошибка локального API: {response.status_code} - {response.text}"
+        except Exception as e:
+            return f"Ошибка локального API: {e}"
+    
+    return None
 
 def cluster_data(df, n_clusters):
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
@@ -291,13 +375,11 @@ def show_results_tab():
         if st.session_state['problem_type'] == "classification" and st.session_state['cm'] is not None:
             st.write("### Матрица ошибок")
             try:
-                # Получаем уникальные классы из тестовых и предсказанных значений
                 all_classes = np.unique(np.concatenate([
                     st.session_state['y_test'], 
                     st.session_state['y_pred']
                 ]))
                 
-                # Создаем фигуру для матрицы ошибок
                 fig, ax = plt.subplots(figsize=(8, 6))
                 ConfusionMatrixDisplay.from_predictions(
                     st.session_state['y_test'],
@@ -313,7 +395,6 @@ def show_results_tab():
             except Exception as e:
                 st.error(f"Ошибка при построении матрицы ошибок: {str(e)}")
                 
-                # Альтернативное отображение матрицы ошибок
                 try:
                     cm = confusion_matrix(st.session_state['y_test'], st.session_state['y_pred'])
                     unique_classes = np.unique(np.concatenate([
@@ -321,7 +402,6 @@ def show_results_tab():
                         st.session_state['y_pred']
                     ]))
                     
-                    # Проверяем соответствие размеров матрицы и меток
                     if cm.shape[0] == len(unique_classes) and cm.shape[1] == len(unique_classes):
                         st.write(pd.DataFrame(
                             cm,
@@ -437,27 +517,52 @@ def show_report_tab():
 3. Идеи для статей на основе кластерного анализа
 """
         try:
-            if openai.api_key:
-                response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "Ты журналист-аналитик, специализирующийся на кластерном анализе."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7,
-                    max_tokens=1500
+            if ai_provider == "huggingface":
+                if "Authorization" not in MODEL_CONFIG[ai_provider]["headers"]:
+                    st.warning("Для генерации отчета требуется HuggingFace API ключ")
+                    return
+                
+                model_name = MODEL_CONFIG[ai_provider]["models"][selected_model]
+                api_url = f"{MODEL_CONFIG[ai_provider]['api_url']}{model_name}"
+                
+                response = requests.post(
+                    api_url,
+                    headers=MODEL_CONFIG[ai_provider]["headers"],
+                    json={"inputs": prompt}
                 )
-                st.markdown(response['choices'][0]['message']['content'])
-            else:
-                st.warning("Для генерации отчета требуется OpenAI API ключ")
+                
+                if response.status_code == 200:
+                    st.markdown(response.json()[0]['generated_text'])
+                else:
+                    st.error(f"Ошибка API: {response.status_code} - {response.text}")
+            
+            elif ai_provider == "local":
+                response = requests.post(
+                    MODEL_CONFIG[ai_provider]["api_url"],
+                    headers=MODEL_CONFIG[ai_provider]["headers"],
+                    json={
+                        "model": selected_model,
+                        "messages": [
+                            {"role": "system", "content": "Ты журналист-аналитик, специализирующийся на кластерном анализе."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": 0.7,
+                        "max_tokens": 1500
+                    }
+                )
+                
+                if response.status_code == 200:
+                    st.markdown(response.json()['choices'][0]['message']['content'])
+                else:
+                    st.error(f"Ошибка локального API: {response.status_code} - {response.text}")
+            
         except Exception as e:
-            st.error(f"Ошибка OpenAI API: {e}")
+            st.error(f"Ошибка API: {e}")
 
 def show_settings_tab():
     st.subheader("Настройки модели")
     
     if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
-        # Создаем буфер в памяти для сохранения модели
         buffer = io.BytesIO()
         joblib.dump(st.session_state['model'], buffer)
         buffer.seek(0)
@@ -484,7 +589,7 @@ def main():
     st.sidebar.header("1. Загрузите данные")
     uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
 
-    global df, df_clean, ml_task
+    global df, df_clean, ml_task, ai_provider, selected_model
     df = None
     df_clean = None
 
@@ -568,7 +673,6 @@ def main():
                         
                         st.success(f"✅ Данные разбиты на {n_clusters} кластеров!")
             
-            # Проверяем, есть ли что показывать во вкладках
             show_tabs = False
             if ml_task in ["Прогнозирование (регрессия)", "Классификация"] and 'model' in st.session_state:
                 show_tabs = True
