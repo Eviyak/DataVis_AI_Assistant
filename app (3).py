@@ -284,25 +284,47 @@ def show_results_tab():
         if st.session_state['problem_type'] == "classification" and st.session_state['cm'] is not None:
             st.write("### Матрица ошибок")
             try:
-                classes = np.unique(st.session_state['y_test'])
+                # Получаем уникальные классы из тестовых и предсказанных значений
+                all_classes = np.unique(np.concatenate([
+                    st.session_state['y_test'], 
+                    st.session_state['y_pred']
+                ]))
+                
+                # Создаем фигуру для матрицы ошибок
                 fig, ax = plt.subplots(figsize=(8, 6))
                 ConfusionMatrixDisplay.from_predictions(
                     st.session_state['y_test'],
                     st.session_state['y_pred'],
-                    display_labels=classes,
+                    display_labels=all_classes,
                     cmap='Blues',
                     ax=ax,
                     values_format='d'
                 )
                 ax.set_title('Матрица ошибок')
                 st.pyplot(fig)
+                
             except Exception as e:
                 st.error(f"Ошибка при построении матрицы ошибок: {str(e)}")
-                cm = confusion_matrix(st.session_state['y_test'], st.session_state['y_pred'])
-                st.write("Альтернативное отображение:")
-                st.write(pd.DataFrame(cm,
-                                    index=[f"Истинный {c}" for c in classes],
-                                    columns=[f"Предсказанный {c}" for c in classes]))
+                
+                # Альтернативное отображение матрицы ошибок
+                try:
+                    cm = confusion_matrix(st.session_state['y_test'], st.session_state['y_pred'])
+                    unique_classes = np.unique(np.concatenate([
+                        st.session_state['y_test'], 
+                        st.session_state['y_pred']
+                    ]))
+                    
+                    # Проверяем соответствие размеров матрицы и меток
+                    if cm.shape[0] == len(unique_classes) and cm.shape[1] == len(unique_classes):
+                        st.write(pd.DataFrame(
+                            cm,
+                            index=[f"Истинный {c}" for c in unique_classes],
+                            columns=[f"Предсказанный {c}" for c in unique_classes]
+                        ))
+                    else:
+                        st.write("Числовая матрица ошибок:", cm)
+                except Exception as e2:
+                    st.write("Не удалось отобразить матрицу ошибок:", str(e2))
     
     elif ml_task == "Кластеризация":
         st.write("### Распределение по кластерам")
