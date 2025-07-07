@@ -2,7 +2,9 @@ streamlit
 pandas
 numpy
 plotly
-scikit-learn
-statsmodels
 openai==0.28.0
-tabulate
+scikit-learn
+shap
+matplotlib
+seaborn
+joblib
