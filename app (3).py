@@ -202,7 +202,7 @@ def generate_ai_report(df, model, problem_type, target, metrics):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.6,
-            max_tokens=500
+            max_tokens=1500
         )
         return response['choices'][0]['message']['content']
     except Exception as e:
@@ -235,7 +235,7 @@ def generate_flourish_recommendations(df, target):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=300
+            max_tokens=1000
         )
         return response['choices'][0]['message']['content']
     except Exception as e:
@@ -413,10 +413,14 @@ def show_settings_tab():
     st.subheader("Настройки модели")
     
     if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
-        model_bytes = joblib.dumps(st.session_state['model'])
+        # Создаем буфер в памяти для сохранения модели
+        buffer = io.BytesIO()
+        joblib.dump(st.session_state['model'], buffer)
+        buffer.seek(0)
+        
         st.download_button(
             label="💾 Скачать модель (joblib)",
-            data=model_bytes,
+            data=buffer,
             file_name=f"model_{datetime.now().strftime('%Y%m%d')}.joblib",
             mime="application/octet-stream"
         )
