@@ -2,15 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
 import openai
 import io
 import json
 import warnings
-from plotly.subplots import make_subplots
 from sklearn.ensemble import IsolationForest
-from statsmodels.tsa.seasonal import seasonal_decompose
-from pandas.api.types import is_datetime64_any_dtype
+from pandas.api.types import is_numeric_dtype, is_categorical_dtype
 
 warnings.filterwarnings('ignore')
 
@@ -36,16 +33,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Заголовок
 st.title("InsightBot Pro")
 st.markdown("""
     <div style="background-color:#ffffff;padding:10px;border-radius:10px;margin-bottom:20px;">
     <p style="color:#333;font-size:18px;">🚀 <b>Автоматический анализ данных с AI-powered инсайтами</b></p>
-    <p style="color:#666;">Загрузите CSV, Excel или JSON — получите полный анализ и визуализацию</p>
+    <p style="color:#666;">Загрузите CSV, Excel или JSON — получите полный анализ и визуализацию с автоматической очисткой и советами</p>
     </div>
 """, unsafe_allow_html=True)
 
-# === КЭШ ЗАГРУЗКИ ===
 @st.cache_data(show_spinner="Загружаю данные... ⏳", ttl=3600, max_entries=3)
 def load_data(uploaded_file):
     try:
@@ -86,6 +81,34 @@ def reduce_mem_usage(df):
                     df[col] = df[col].astype(np.float64)
     end_mem = df.memory_usage().sum() / 1024**2
     st.sidebar.info(f"Оптимизация памяти: {start_mem:.2f} MB → {end_mem:.2f} MB (сэкономлено {100*(start_mem-end_mem)/start_mem:.1f}%)")
+    return df
+
+def fill_missing_values(df):
+    df_filled = df.copy()
+    for col in df_filled.columns:
+        if df_filled[col].isnull().sum() > 0:
+            if is_numeric_dtype(df_filled[col]):
+                median_val = df_filled[col].median()
+                df_filled[col].fillna(median_val, inplace=True)
+            else:
+                mode_val = df_filled[col].mode()
+                if not mode_val.empty:
+                    df_filled[col].fillna(mode_val[0], inplace=True)
+                else:
+                    df_filled[col].fillna("Unknown", inplace=True)
+    return df_filled
+
+def mark_anomalies(df):
+    # Применяем IsolationForest только к числовым колонкам
+    num_cols = df.select_dtypes(include=np.number).columns
+    if len(num_cols) == 0:
+        return df  # Нет числовых колонок — анномалии не ищем
+
+    iso = IsolationForest(contamination=0.05, random_state=42)
+    preds = iso.fit_predict(df[num_cols])
+    df['anomaly'] = preds
+    # -1 — аномалия, 1 — нормальная точка
+    df['anomaly'] = df['anomaly'].map({1: 0, -1: 1})  # 1 - аномалия, 0 - норма
     return df
 
 @st.cache_data(show_spinner="Анализирую данные... 🔍", ttl=600)
@@ -188,35 +211,6 @@ def generate_viz_recommendations(df):
     except Exception as e:
         return f"Ошибка OpenAI API: {e}"
 
-# --- NEW: функция очистки данных ---
-def clean_data(df):
-    df_clean = df.copy()
-
-    # Заполнение пропусков: числовые - медианой, категориальные - модой или "Unknown"
-    for col in df_clean.columns:
-        if df_clean[col].isnull().sum() > 0:
-            if pd.api.types.is_numeric_dtype(df_clean[col]):
-                median_val = df_clean[col].median()
-                df_clean[col].fillna(median_val, inplace=True)
-            else:
-                mode_val = df_clean[col].mode()
-                if not mode_val.empty:
-                    df_clean[col].fillna(mode_val[0], inplace=True)
-                else:
-                    df_clean[col].fillna("Unknown", inplace=True)
-
-    # Выделение аномалий через IsolationForest (только для числовых колонок)
-    num_cols = df_clean.select_dtypes(include=np.number).columns.tolist()
-    if num_cols:
-        iso_forest = IsolationForest(contamination=0.01, random_state=42)
-        preds = iso_forest.fit_predict(df_clean[num_cols])
-        df_clean['anomaly'] = preds
-        df_clean['anomaly'] = df_clean['anomaly'].map({1: 'normal', -1: 'anomaly'})
-    else:
-        df_clean['anomaly'] = 'no numeric data'
-
-    return df_clean
-
 # === UI ===
 st.sidebar.header("Загрузите файл с данными")
 uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
@@ -228,38 +222,40 @@ if uploaded_file:
         st.success(f"Файл загружен: {uploaded_file.name} ({df.shape[0]} строк, {df.shape[1]} колонок)")
         st.dataframe(df.head())
 
-        # Автоматическая очистка данных (NEW)
-        st.subheader("🧹 Очищенные данные (заполнение пропусков, пометка аномалий)")
-        df_clean = clean_data(df)
-        st.dataframe(df_clean.head())
+        # Кнопка очистки данных
+        if st.sidebar.button("Автоматически очистить данные"):
+            with st.spinner("Обрабатываю..."):
+                df_clean = fill_missing_values(df)
+                df_clean = mark_anomalies(df_clean)
+            st.success("Данные очищены! Добавлен столбец 'anomaly' (1 — аномалия, 0 — норма).")
+            st.subheader("📋 Очищенные данные (первые 20 строк)")
+            st.dataframe(df_clean.head(20))
 
-        st.markdown(f"Количество строк с аномалиями: {(df_clean['anomaly'] == 'anomaly').sum()}")
+            # Кнопка скачивания очищенного файла
+            to_download = df_clean.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Скачать очищенный CSV",
+                data=to_download,
+                file_name="cleaned_data.csv",
+                mime="text/csv"
+            )
 
-        st.subheader("📊 Общий анализ данных")
-        summary = analyze_with_ai(df_clean)  # анализируем очищенный датафрейм
-        st.markdown(summary)
+            st.subheader("📊 Общий анализ очищенных данных")
+            summary = analyze_with_ai(df_clean)
+            st.markdown(summary)
 
-        st.subheader("🤖 AI Инсайты по данным")
-        insights = generate_ai_insights(df_clean)
-        st.markdown(insights)
+            st.subheader("🤖 AI Инсайты по очищенным данным")
+            insights = generate_ai_insights(df_clean)
+            st.markdown(insights)
 
-        st.subheader("🎨 Рекомендации по визуализациям")
-        viz_recs = generate_viz_recommendations(df_clean)
-        if viz_recs:
-            st.markdown(viz_recs)
+            st.subheader("🎨 Рекомендации по визуализациям")
+            viz_recs = generate_viz_recommendations(df_clean)
+            if viz_recs:
+                st.markdown(viz_recs)
+            else:
+                st.info("Нет рекомендаций по визуализациям.")
         else:
-            st.info("Нет рекомендаций по визуализациям.")
-
-        # NEW: Кнопка скачивания очищенного файла
-        csv_buffer = io.StringIO()
-        df_clean.to_csv(csv_buffer, index=False)
-        st.download_button(
-            label="Скачать очищенный CSV для Flourish и др.",
-            data=csv_buffer.getvalue(),
-            file_name="cleaned_data.csv",
-            mime="text/csv"
-        )
-
+            st.info("Нажмите кнопку 'Автоматически очистить данные' в боковой панели для начала обработки.")
     else:
         st.error("Не удалось загрузить данные из файла.")
 else:
