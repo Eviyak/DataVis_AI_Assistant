@@ -56,15 +56,14 @@ def load_data(uploaded_file):
     try:
         file_bytes = uploaded_file.read()
         if uploaded_file.name.endswith('.csv'):
-            return pd.read_csv(io.BytesIO(file_bytes), encoding_errors='ignore')
+            return pd.read_csv(io.BytesIO(file_bytes), None
         elif uploaded_file.name.endswith(('.xlsx', '.xls')):
-            return pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl')
+            return pd.read_excel(io.BytesIO(file_bytes), None
         elif uploaded_file.name.endswith('.json'):
             data = json.loads(file_bytes.decode('utf-8'))
-            return pd.json_normalize(data)
+            return pd.json_normalize(data), None
     except Exception as e:
-        st.error(f"Ошибка загрузки: {str(e)}")
-        return None
+        return None, f"Ошибка загрузки: {str(e)}"
 
 def reduce_mem_usage(df):
     start_mem = df.memory_usage().sum() / 1024**2
@@ -118,17 +117,14 @@ def mark_anomalies(df):
     return df
 
 def prepare_data_for_ml(df, target_column):
-    # Кодирование категориальных переменных
     le = LabelEncoder()
     for col in df.columns:
         if df[col].dtype == 'object':
             df[col] = le.fit_transform(df[col].astype(str))
     
-    # Разделение на признаки и целевую переменную
     X = df.drop(columns=[target_column])
     y = df[target_column]
     
-    # Масштабирование признаков
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     
@@ -136,7 +132,7 @@ def prepare_data_for_ml(df, target_column):
 
 def train_model(X, y, problem_type):
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    cm = None  # Инициализация переменной cm
+    cm = None
     
     if problem_type == "classification":
         model = RandomForestClassifier(n_estimators=100, random_state=42)
@@ -144,7 +140,7 @@ def train_model(X, y, problem_type):
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
-        cm = confusion_matrix(y_test, y_pred)  # Только для классификации
+        cm = confusion_matrix(y_test, y_pred)
         metrics = {"Точность": accuracy}
     else:
         model = RandomForestRegressor(n_estimators=100, random_state=42)
@@ -161,9 +157,9 @@ def generate_shap_plot(model, X, feature_names):
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X)
     
-    if isinstance(shap_values, list):  # Для классификации
+    if isinstance(shap_values, list):
         shap.summary_plot(shap_values[1], X, feature_names=feature_names, show=False)
-    else:  # Для регрессии
+    else:
         shap.summary_plot(shap_values, X, feature_names=feature_names, show=False)
     
     plt.tight_layout()
@@ -269,7 +265,7 @@ df = None
 df_clean = None
 
 if uploaded_file:
-    df = load_data(uploaded_file)
+    df, error = load_data(uploaded_file)
     if df is not None:
         df = reduce_mem_usage(df)
         st.sidebar.success(f"Файл загружен: {uploaded_file.name}")
@@ -412,13 +408,24 @@ if uploaded_file:
                             'Фактические': st.session_state['y_test'],
                             'Прогнозные': st.session_state['y_pred']
                         })
-                        fig = px.scatter(
-                            results, 
-                            x='Фактические', 
-                            y='Прогнозные',
-                            trendline='ols',
-                            title="Сравнение прогнозов и фактических значений"
-                        )
+                        
+                        try:
+                            fig = px.scatter(
+                                results, 
+                                x='Фактические', 
+                                y='Прогнозные',
+                                trendline='ols',
+                                title="Сравнение прогнозов и фактических значений"
+                            )
+                        except Exception as e:
+                            st.warning(f"Не удалось построить трендлинию: {str(e)}. Показываю scatter plot без линии тренда.")
+                            fig = px.scatter(
+                                results, 
+                                x='Фактические', 
+                                y='Прогнозные',
+                                title="Сравнение прогнозов и фактических значений (без тренда)"
+                            )
+                        
                         st.plotly_chart(fig, use_container_width=True)
             
             with tab3:
@@ -440,7 +447,8 @@ if uploaded_file:
                         st.session_state['df'],
                         st.session_state['target']
                     )
-                    st.markdown(flourish_recs)
+                    if flourish_recs:
+                        st.markdown(flourish_recs)
                 
                 elif ml_task == "Кластеризация":
                     st.write("### Интерпретация кластеров")
@@ -491,12 +499,9 @@ if uploaded_file:
                         sample_prepared = prepare_data_for_ml(sample, st.session_state['target'])[0]
                         prediction = st.session_state['model'].predict(sample_prepared)
                         st.metric(label="Прогноз", value=prediction[0])
-        
-        else:
-            st.info("👆 Настройте параметры и нажмите 'Обучить модель'")
     
     else:
-        st.error("Не удалось загрузить данные из файла.")
+        st.error(f"Ошибка загрузки данных: {error}")
 else:
     st.info("👈 Пожалуйста, загрузите файл для начала анализа")
     st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?ixlib=rb-1.2.1&auto=format&fit=crop&w=1200&q=80", 
