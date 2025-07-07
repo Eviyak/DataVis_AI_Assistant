@@ -2,10 +2,13 @@ streamlit
 pandas
 numpy
 plotly
-openai==0.28.0
 scikit-learn
 shap
 matplotlib
 seaborn
 joblib
+requests
 openpyxl
+xlrd
+python-dateutil
+tqdm
