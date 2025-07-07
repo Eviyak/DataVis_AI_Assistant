@@ -108,14 +108,29 @@ def fill_missing_values(df):
     return df_filled
 
 def mark_anomalies(df):
-    num_cols = df.select_dtypes(include=np.number).columns
+    num_cols = df.select_dtypes(include=np.number).columns.tolist()
+    
     if len(num_cols) == 0:
         return df
-    iso = IsolationForest(contamination=0.05, random_state=42)
-    preds = iso.fit_predict(df[num_cols])
-    df['anomaly'] = preds
-    df['anomaly'] = df['anomaly'].map({1: 0, -1: 1})
-    return df
+    
+    df_processed = df.copy()
+    
+    X = df_processed[num_cols].values
+    X = np.nan_to_num(X)
+    
+    try:
+        # Инициализируем и обучаем модель
+        iso = IsolationForest(contamination=0.05, random_state=42)
+        preds = iso.fit_predict(X)
+        
+        # Добавляем метки аномалий в DataFrame
+        df_processed['anomaly'] = preds
+        df_processed['anomaly'] = df_processed['anomaly'].map({1: 0, -1: 1})
+        
+        return df_processed
+    except Exception as e:
+        st.error(f"Ошибка при обнаружении аномалий: {str(e)}")
+        return df
 
 def prepare_data_for_ml(df, target_column):
     le = LabelEncoder()
