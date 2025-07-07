@@ -56,9 +56,9 @@ def load_data(uploaded_file):
     try:
         file_bytes = uploaded_file.read()
         if uploaded_file.name.endswith('.csv'):
-            return pd.read_csv(io.BytesIO(file_bytes), None
+            return pd.read_csv(io.BytesIO(file_bytes)), None
         elif uploaded_file.name.endswith(('.xlsx', '.xls')):
-            return pd.read_excel(io.BytesIO(file_bytes), None
+            return pd.read_excel(io.BytesIO(file_bytes)), None
         elif uploaded_file.name.endswith('.json'):
             data = json.loads(file_bytes.decode('utf-8'))
             return pd.json_normalize(data), None
