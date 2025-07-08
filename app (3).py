@@ -228,30 +228,29 @@ def generate_shap_plot(model, X, feature_names):
     return plt.gcf()
 
 def get_gigachat_token():
-    """Получает access token для GigaChat API согласно официальной документации"""
+
     try:
-        # Получаем учетные данные из секретов Streamlit
         if 'GIGACHAT_CREDENTIALS' not in st.secrets:
-            st.error("Не найдены учетные данные GigaChat в секретах Streamlit")
+            st.error("Не найдены учетные данные в секретах Streamlit")
             return None
             
         client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id']
         client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret']
         
-        # Генерируем уникальный RqUID как в документации
         import uuid
         rq_uid = str(uuid.uuid4())
         
-        # Создаем строку авторизации в точном формате из примера
+    
         auth_string = f"{client_id}:{client_secret}"
+        # Важно: использовать строго ASCII кодировку и удалить переносы строк
         auth_bytes = auth_string.encode('ascii')
-        base64_auth = base64.b64encode(auth_bytes).decode('ascii')
+        base64_auth = base64.b64encode(auth_bytes).decode('ascii').strip()
         
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json',
             'RqUID': rq_uid,
-            'Authorization': f'Basic {base64_auth}'
+            'Authorization': f'Basic {base64_auth}'  # Важно: без лишних пробелов
         }
         
         data = {
@@ -266,9 +265,11 @@ def get_gigachat_token():
         )
         
         if response.status_code == 200:
-            return response.json().get("access_token")
+            return response.json().get('access_token')
         else:
-            st.error(f"Ошибка аутентификации (код {response.status_code}): {response.text}")
+            st.error(f"Ошибка аутентификации ({response.status_code}): {response.text}")
+        
+            st.error(f"Заголовок Authorization: Basic {base64_auth[:10]}...")
             return None
             
     except Exception as e:
