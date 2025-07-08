@@ -205,7 +205,7 @@ if uploaded_file:
             df_clean = mark_anomalies(df_clean)
 
         st.success("✅ Данные автоматически очищены! Добавлен столбец 'anomaly' (1 — аномалия, 0 — норма).")
-       st.subheader("📋 Очищенные данные (первые 20 строк)")
+          st.subheader("📋 Очищенные данные (первые 20 строк)")
         st.dataframe(df_clean.head(20))
 
         to_download = df_clean.to_csv(index=False).encode('utf-8')
