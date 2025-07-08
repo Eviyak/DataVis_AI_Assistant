@@ -229,36 +229,39 @@ def generate_shap_plot(model, X, feature_names):
 
 import uuid  
 
+import requests
+import base64
+import uuid
+import streamlit as st
+from urllib.parse import quote
+
+# 1. Функция для получения Access Token
 def get_gigachat_token():
-    
+    """Получаем Access Token для GigaChat API"""
     try:
         if 'GIGACHAT_CREDENTIALS' not in st.secrets:
-            st.error("Учетные данные не найдены в секретах Streamlit")
+            st.error("Учетные данные не найдены в секретах")
             return None
-
+            
         client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id']
         client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret']
         
+        # Формируем Basic Auth
+        auth_string = f"{quote(client_id)}:{quote(client_secret)}"
+        base64_auth = base64.b64encode(auth_string.encode()).decode('utf-8')
         
-        credentials = f"{client_id}:{client_secret}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode('utf-8')
-        
-       
-        rq_uid = str(uuid.uuid4())
-        
-        
+        # Заголовки запроса
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json',
-            'RqUID': rq_uid,
-            'Authorization': f'Basic {encoded_credentials}'
+            'RqUID': str(uuid.uuid4()),
+            'Authorization': f'Basic {base64_auth}'
         }
         
-        data = {
-            'scope': 'GIGACHAT_API_PERS'
-        }
+        # Тело запроса
+        data = 'scope=GIGACHAT_API_PERS'
         
-        # 4. Отправляем запрос с таймаутом
+        # Отправка запроса
         response = requests.post(
             "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
             headers=headers,
@@ -267,25 +270,77 @@ def get_gigachat_token():
             timeout=10
         )
         
-        # 5. Обрабатываем ответ
         if response.status_code == 200:
             return response.json().get('access_token')
         else:
-            error_msg = f"""
-            Ошибка аутентификации ({response.status_code}):
-            Заголовок Authorization: Basic {encoded_credentials[:10]}...
-            RqUID: {rq_uid}
-            Ответ сервера: {response.text}
-            """
-            st.error(error_msg)
+            st.error(f"Ошибка аутентификации: {response.status_code} - {response.text}")
             return None
             
-    except requests.exceptions.RequestException as e:
-        st.error(f"Ошибка сети при запросе токена: {str(e)}")
-        return None
     except Exception as e:
-        st.error(f"Неожиданная ошибка: {str(e)}")
+        st.error(f"Ошибка при получении токена: {str(e)}")
         return None
+
+# 2. Функция для выполнения запросов к API
+def call_gigachat_api(endpoint, method="GET", payload=None):
+    """Выполняет запрос к GigaChat API"""
+    access_token = get_gigachat_token()
+    if not access_token:
+        return None
+    
+    headers = {
+        'Accept': 'application/json',
+        'Authorization': f'Bearer {access_token}'
+    }
+    
+    try:
+        response = requests.request(
+            method,
+            f"https://gigachat.devices.sberbank.ru/api/v1/{endpoint}",
+            headers=headers,
+            json=payload,
+            verify=False,
+            timeout=15
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Ошибка API ({response.status_code}): {response.text}")
+            return None
+            
+    except Exception as e:
+        st.error(f"Ошибка при вызове API: {str(e)}")
+        return None
+
+# 3. Пример использования в Streamlit
+def main():
+    st.title("GigaChat API Integration")
+    
+    if st.button("Получить список моделей"):
+        with st.spinner("Запрашиваю доступные модели..."):
+            models = call_gigachat_api("models")
+            if models:
+                st.json(models)
+    
+    if st.button("Задать вопрос"):
+        prompt = st.text_input("Ваш вопрос:")
+        if prompt:
+            with st.spinner("Обрабатываю запрос..."):
+                response = call_gigachat_api(
+                    "chat/completions",
+                    method="POST",
+                    payload={
+                        "model": "GigaChat",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.7,
+                        "max_tokens": 1000
+                    }
+                )
+                if response:
+                    st.write(response['choices'][0]['message']['content'])
+
+if __name__ == "__main__":
+    main()
 
 def generate_ai_report(df, model, problem_type, target, metrics):
     """Генерирует журналистский отчет с помощью GigaChat API"""
