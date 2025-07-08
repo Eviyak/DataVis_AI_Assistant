@@ -235,33 +235,40 @@ import uuid
 import streamlit as st
 from urllib.parse import quote
 
-# 1. Функция для получения Access Token
 def get_gigachat_token():
-    """Получаем Access Token для GigaChat API"""
+    import uuid
+
     try:
         if 'GIGACHAT_CREDENTIALS' not in st.secrets:
-            st.error("Учетные данные не найдены в секретах")
+            st.error("Учетные данные не найдены в секретах Streamlit")
             return None
-            
-        client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id']
-        client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret']
-        
-        # Формируем Basic Auth
-        auth_string = f"{quote(client_id)}:{quote(client_secret)}"
-        base64_auth = base64.b64encode(auth_string.encode()).decode('utf-8')
-        
-        # Заголовки запроса
+
+        client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id'].strip()
+        client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret'].strip()
+
+        # Проверка наличия client_id и client_secret
+        if not client_id or not client_secret:
+            st.error("Client ID или Secret пусты")
+            return None
+
+        # Уникальный идентификатор запроса
+        rq_uid = str(uuid.uuid4())
+
+        # Кодировка client_id:client_secret в base64
+        credentials = f"{client_id}:{client_secret}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode('utf-8')
+
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json',
-            'RqUID': str(uuid.uuid4()),
-            'Authorization': f'Basic {base64_auth}'
+            'RqUID': rq_uid,
+            'Authorization': f'Basic {encoded_credentials}'
         }
-        
-        # Тело запроса
-        data = 'scope=GIGACHAT_API_PERS'
-        
-        # Отправка запроса
+
+        data = {
+            'scope': 'GIGACHAT_API_PERS'
+        }
+
         response = requests.post(
             "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
             headers=headers,
@@ -269,15 +276,23 @@ def get_gigachat_token():
             verify=False,
             timeout=10
         )
-        
+
         if response.status_code == 200:
             return response.json().get('access_token')
         else:
-            st.error(f"Ошибка аутентификации: {response.status_code} - {response.text}")
+            error_msg = f"""
+            ❌ Ошибка аутентификации ({response.status_code}):
+            RqUID: {rq_uid}
+            Ответ сервера: {response.text}
+            """
+            st.error(error_msg)
             return None
-            
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"Ошибка сети при запросе токена: {str(e)}")
+        return None
     except Exception as e:
-        st.error(f"Ошибка при получении токена: {str(e)}")
+        st.error(f"Неожиданная ошибка: {str(e)}")
         return None
 
 # 2. Функция для выполнения запросов к API
