@@ -228,31 +228,55 @@ def generate_shap_plot(model, X, feature_names):
     return plt.gcf()
 
 def get_gigachat_token():
+    """Получает access token для GigaChat API согласно официальной документации"""
     try:
-        auth = MODEL_CONFIG["gigachat"]["auth"]
-        credentials = f"{auth.username}:{auth.password}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        # Получаем учетные данные из секретов Streamlit
+        if 'GIGACHAT_CREDENTIALS' not in st.secrets:
+            st.error("Не найдены учетные данные GigaChat в секретах Streamlit")
+            return None
+            
+        client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id']
+        client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret']
+        
+        # Генерируем уникальный RqUID как в документации
+        import uuid
+        rq_uid = str(uuid.uuid4())
+        
+        # Создаем строку авторизации в точном формате из примера
+        auth_string = f"{client_id}:{client_secret}"
+        auth_bytes = auth_string.encode('ascii')
+        base64_auth = base64.b64encode(auth_bytes).decode('ascii')
+        
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'RqUID': rq_uid,
+            'Authorization': f'Basic {base64_auth}'
+        }
+        
+        data = {
+            'scope': 'GIGACHAT_API_PERS'
+        }
         
         response = requests.post(
-            MODEL_CONFIG["gigachat"]["auth_url"],
-            headers={
-                "Authorization": f"Basic {encoded_credentials}",
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
-            data={"scope": MODEL_CONFIG["gigachat"]["scope"]},
+            "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            headers=headers,
+            data=data,
             verify=False
         )
         
         if response.status_code == 200:
-            return response.json()["access_token"]
+            return response.json().get("access_token")
         else:
-            st.error(f"Ошибка аутентификации: {response.status_code} - {response.text}")
+            st.error(f"Ошибка аутентификации (код {response.status_code}): {response.text}")
             return None
+            
     except Exception as e:
-        st.error(f"Ошибка получения токена: {str(e)}")
+        st.error(f"Ошибка при получении токена: {str(e)}")
         return None
 
 def generate_ai_report(df, model, problem_type, target, metrics):
+    """Генерирует журналистский отчет с помощью GigaChat API"""
     prompt = f"""
 Ты - журналист-аналитик с опытом в data science. Подготовь отчет о результатах анализа данных и построенной модели машинного обучения.
 
@@ -284,12 +308,13 @@ def generate_ai_report(df, model, problem_type, target, metrics):
     
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
     
     try:
         response = requests.post(
-            MODEL_CONFIG["gigachat"]["api_url"],
+            "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
             headers=headers,
             json={
                 "model": "GigaChat",
@@ -311,6 +336,7 @@ def generate_ai_report(df, model, problem_type, target, metrics):
         return f"Ошибка вызова GigaChat API: {str(e)}"
 
 def generate_flourish_recommendations(df, target):
+    """Генерирует рекомендации по визуализациям в Flourish"""
     prompt = f"""
 На основе данных с колонками: {list(df.columns)} и целевой переменной '{target}', 
 предложи 3 оптимальных типа визуализаций для Flourish. Для каждого укажи:
@@ -333,12 +359,13 @@ def generate_flourish_recommendations(df, target):
     
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
     
     try:
         response = requests.post(
-            MODEL_CONFIG["gigachat"]["api_url"],
+            "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
             headers=headers,
             json={
                 "model": "GigaChat",
