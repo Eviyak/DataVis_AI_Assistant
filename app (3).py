@@ -224,7 +224,7 @@ if uploaded_file:
         insights = generate_ai_insights(df_clean)
         st.markdown(insights)
 
-        st.subheader("\ud83c\udfa8 Рекомендации по визуализациям")
+        st.subheader("🎨 Рекомендации по визуализациям")
         viz_recs = generate_viz_recommendations(df_clean)
         if viz_recs:
             st.markdown(viz_recs)
