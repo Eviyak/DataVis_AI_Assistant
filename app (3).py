@@ -231,11 +231,17 @@ def get_gigachat_token():
             headers=headers,
             data=data,
             verify=False,
-            timeout=10
+            timeout=30  # Увеличили таймаут
         )
         
         if response.status_code == 200:
-            return response.json().get('access_token')
+            token_response = response.json()
+            access_token = token_response.get('access_token')
+            if access_token:
+                return access_token
+            else:
+                st.error("Отсутствует ключ доступа в ответе сервера.")
+                return None
         else:
             error_detail = {
                 'status_code': response.status_code,
