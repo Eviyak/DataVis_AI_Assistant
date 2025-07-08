@@ -200,12 +200,12 @@ if uploaded_file:
         st.subheader("📄 Предварительный просмотр данных")
         st.dataframe(df.head())
 
-        with st.spinner("\ud83e\uddfc Автоматически очищаю данные..."):
+        with st.spinner("🧽 Автоматически очищаю данные..."):
             df_clean = fill_missing_values(df)
             df_clean = mark_anomalies(df_clean)
 
-        st.success("\u2705 Данные автоматически очищены! Добавлен столбец 'anomaly' (1 — аномалия, 0 — норма).")
-        st.subheader("\ud83d\udccb Очищенные данные (первые 20 строк)")
+        st.success("✅ Данные автоматически очищены! Добавлен столбец 'anomaly' (1 — аномалия, 0 — норма).")
+       st.subheader("📋 Очищенные данные (первые 20 строк)")
         st.dataframe(df_clean.head(20))
 
         to_download = df_clean.to_csv(index=False).encode('utf-8')
@@ -216,11 +216,11 @@ if uploaded_file:
             mime="text/csv"
         )
 
-        st.subheader("\ud83d\udcca Общий анализ очищенных данных")
+        st.subheader("📊 Общий анализ очищенных данных")
         summary = analyze_with_ai(df_clean)
         st.markdown(summary)
 
-        st.subheader("\ud83e\udd16 AI Инсайты по очищенным данным")
+        st.subheader("🤖 AI Инсайты по очищенным данным") 
         insights = generate_ai_insights(df_clean)
         st.markdown(insights)
 
