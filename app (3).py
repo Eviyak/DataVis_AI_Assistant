@@ -17,6 +17,12 @@ import seaborn as sns
 import joblib
 from datetime import datetime
 from pandas.api.types import is_numeric_dtype, is_categorical_dtype
+from requests.auth import HTTPBasicAuth
+import base64
+import urllib3
+
+# Отключение предупреждений о SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 warnings.filterwarnings('ignore')
 
@@ -28,39 +34,32 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Конфигурация моделей
+# Конфигурация GigaChat
 MODEL_CONFIG = {
-    "huggingface": {
-        "api_url": "https://api-inference.huggingface.co/models/",
-        "models": {
-            "llama2-7b": "meta-llama/Llama-2-7b-chat-hf",
-            "mistral-7b": "mistralai/Mistral-7B-Instruct-v0.1"
-        },
-        "headers": {}
-    },
-    "local": {
-        "api_url": "http://localhost:8080/v1/chat/completions",
-        "models": {
-            "llama2-7b": "local-llama2"
-        },
+    "gigachat": {
+        "api_url": "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+        "auth_url": "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+        "scope": "GIGACHAT_API_PERS",
         "headers": {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
     }
 }
 
-# Выбор модели в сайдбаре
-st.sidebar.header("Настройки AI")
-ai_provider = st.sidebar.selectbox("AI провайдер", ["huggingface", "local"], index=0)
-selected_model = st.sidebar.selectbox("Модель", list(MODEL_CONFIG[ai_provider]["models"].keys()), index=0)
+# Аутентификация GigaChat
+st.sidebar.header("Настройки GigaChat")
+ai_provider = "gigachat"  # Фиксированный провайдер
 
-if ai_provider == "huggingface":
-    if 'HUGGINGFACE_API_KEY' in st.secrets:
-        MODEL_CONFIG[ai_provider]["headers"]["Authorization"] = f"Bearer {st.secrets['HUGGINGFACE_API_KEY']}"
-    else:
-        huggingface_api_key = st.sidebar.text_input("Введите HuggingFace API ключ:", type="password")
-        if huggingface_api_key:
-            MODEL_CONFIG[ai_provider]["headers"]["Authorization"] = f"Bearer {huggingface_api_key}"
+if 'GIGACHAT_CREDENTIALS' in st.secrets:
+    client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id']
+    client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret']
+    MODEL_CONFIG[ai_provider]["auth"] = HTTPBasicAuth(client_id, client_secret)
+else:
+    client_id = st.sidebar.text_input("Client ID", type="password")
+    client_secret = st.sidebar.text_input("Client Secret", type="password")
+    if client_id and client_secret:
+        MODEL_CONFIG[ai_provider]["auth"] = HTTPBasicAuth(client_id, client_secret)
 
 # Стилизация
 st.markdown("""
@@ -212,6 +211,31 @@ def generate_shap_plot(model, X, feature_names):
     plt.tight_layout()
     return plt.gcf()
 
+def get_gigachat_token():
+    try:
+        auth = MODEL_CONFIG["gigachat"]["auth"]
+        credentials = f"{auth.username}:{auth.password}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        
+        response = requests.post(
+            MODEL_CONFIG["gigachat"]["auth_url"],
+            headers={
+                "Authorization": f"Basic {encoded_credentials}",
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            data={"scope": MODEL_CONFIG["gigachat"]["scope"]},
+            verify=False
+        )
+        
+        if response.status_code == 200:
+            return response.json()["access_token"]
+        else:
+            st.error(f"Ошибка аутентификации: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        st.error(f"Ошибка получения токена: {str(e)}")
+        return None
+
 def generate_ai_report(df, model, problem_type, target, metrics):
     prompt = f"""
 Ты - журналист-аналитик с опытом в data science. Подготовь отчет о результатах анализа данных и построенной модели машинного обучения.
@@ -238,51 +262,37 @@ def generate_ai_report(df, model, problem_type, target, metrics):
 Пиши кратко, понятно, без технического жаргона. Используй маркированные списки.
 """
     
-    if ai_provider == "huggingface":
-        if "Authorization" not in MODEL_CONFIG[ai_provider]["headers"]:
-            return "🔑 HuggingFace API ключ не установлен. Добавьте его в настройках."
-        
-        model_name = MODEL_CONFIG[ai_provider]["models"][selected_model]
-        api_url = f"{MODEL_CONFIG[ai_provider]['api_url']}{model_name}"
-        
-        try:
-            response = requests.post(
-                api_url,
-                headers=MODEL_CONFIG[ai_provider]["headers"],
-                json={"inputs": prompt}
-            )
-            
-            if response.status_code == 200:
-                return response.json()[0]['generated_text']
-            else:
-                return f"Ошибка API: {response.status_code} - {response.text}"
-        except Exception as e:
-            return f"Ошибка вызова HuggingFace API: {str(e)}"
+    access_token = get_gigachat_token()
+    if not access_token:
+        return "🔑 Ошибка аутентификации в GigaChat"
     
-    elif ai_provider == "local":
-        try:
-            response = requests.post(
-                MODEL_CONFIG[ai_provider]["api_url"],
-                headers=MODEL_CONFIG[ai_provider]["headers"],
-                json={
-                    "model": selected_model,
-                    "messages": [
-                        {"role": "system", "content": "Ты журналист-аналитик, объясняющий сложные ML-концепты простым языком."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.6,
-                    "max_tokens": 1500
-                }
-            )
-            
-            if response.status_code == 200:
-                return response.json()['choices'][0]['message']['content']
-            else:
-                return f"Ошибка локального API: {response.status_code} - {response.text}"
-        except Exception as e:
-            return f"Ошибка вызова локального API: {str(e)}"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
     
-    return "Неизвестный провайдер AI"
+    try:
+        response = requests.post(
+            MODEL_CONFIG["gigachat"]["api_url"],
+            headers=headers,
+            json={
+                "model": "GigaChat",
+                "messages": [
+                    {"role": "system", "content": "Ты журналист-аналитик, объясняющий сложные ML-концепты простым языком."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.6,
+                "max_tokens": 1500
+            },
+            verify=False
+        )
+        
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        else:
+            return f"Ошибка GigaChat API: {response.status_code} - {response.text}"
+    except Exception as e:
+        return f"Ошибка вызова GigaChat API: {str(e)}"
 
 def generate_flourish_recommendations(df, target):
     prompt = f"""
@@ -301,51 +311,37 @@ def generate_flourish_recommendations(df, target):
   **Настройки**: Использовать российские регионы в формате GeoJSON
 """
     
-    if ai_provider == "huggingface":
-        if "Authorization" not in MODEL_CONFIG[ai_provider]["headers"]:
-            return None
-        
-        model_name = MODEL_CONFIG[ai_provider]["models"][selected_model]
-        api_url = f"{MODEL_CONFIG[ai_provider]['api_url']}{model_name}"
-        
-        try:
-            response = requests.post(
-                api_url,
-                headers=MODEL_CONFIG[ai_provider]["headers"],
-                json={"inputs": prompt}
-            )
-            
-            if response.status_code == 200:
-                return response.json()[0]['generated_text']
-            else:
-                return f"Ошибка API: {response.status_code} - {response.text}"
-        except Exception as e:
-            return f"Ошибка HuggingFace API: {e}"
+    access_token = get_gigachat_token()
+    if not access_token:
+        return "🔑 Ошибка аутентификации в GigaChat"
     
-    elif ai_provider == "local":
-        try:
-            response = requests.post(
-                MODEL_CONFIG[ai_provider]["api_url"],
-                headers=MODEL_CONFIG[ai_provider]["headers"],
-                json={
-                    "model": selected_model,
-                    "messages": [
-                        {"role": "system", "content": "Ты эксперт по визуализации данных для журналистики."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.7,
-                    "max_tokens": 1000
-                }
-            )
-            
-            if response.status_code == 200:
-                return response.json()['choices'][0]['message']['content']
-            else:
-                return f"Ошибка локального API: {response.status_code} - {response.text}"
-        except Exception as e:
-            return f"Ошибка локального API: {e}"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
     
-    return None
+    try:
+        response = requests.post(
+            MODEL_CONFIG["gigachat"]["api_url"],
+            headers=headers,
+            json={
+                "model": "GigaChat",
+                "messages": [
+                    {"role": "system", "content": "Ты эксперт по визуализации данных для журналистики."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 1000
+            },
+            verify=False
+        )
+        
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        else:
+            return f"Ошибка GigaChat API: {response.status_code} - {response.text}"
+    except Exception as e:
+        return f"Ошибка вызова GigaChat API: {str(e)}"
 
 def cluster_data(df, n_clusters):
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
@@ -516,46 +512,36 @@ def show_report_tab():
 2. Как можно назвать каждый кластер
 3. Идеи для статей на основе кластерного анализа
 """
+        access_token = get_gigachat_token()
+        if not access_token:
+            st.warning("Для генерации отчета требуется аутентификация в GigaChat")
+            return
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
         try:
-            if ai_provider == "huggingface":
-                if "Authorization" not in MODEL_CONFIG[ai_provider]["headers"]:
-                    st.warning("Для генерации отчета требуется HuggingFace API ключ")
-                    return
-                
-                model_name = MODEL_CONFIG[ai_provider]["models"][selected_model]
-                api_url = f"{MODEL_CONFIG[ai_provider]['api_url']}{model_name}"
-                
-                response = requests.post(
-                    api_url,
-                    headers=MODEL_CONFIG[ai_provider]["headers"],
-                    json={"inputs": prompt}
-                )
-                
-                if response.status_code == 200:
-                    st.markdown(response.json()[0]['generated_text'])
-                else:
-                    st.error(f"Ошибка API: {response.status_code} - {response.text}")
+            response = requests.post(
+                MODEL_CONFIG["gigachat"]["api_url"],
+                headers=headers,
+                json={
+                    "model": "GigaChat",
+                    "messages": [
+                        {"role": "system", "content": "Ты журналист-аналитик, специализирующийся на кластерном анализе."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 1500
+                },
+                verify=False
+            )
             
-            elif ai_provider == "local":
-                response = requests.post(
-                    MODEL_CONFIG[ai_provider]["api_url"],
-                    headers=MODEL_CONFIG[ai_provider]["headers"],
-                    json={
-                        "model": selected_model,
-                        "messages": [
-                            {"role": "system", "content": "Ты журналист-аналитик, специализирующийся на кластерном анализе."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "temperature": 0.7,
-                        "max_tokens": 1500
-                    }
-                )
-                
-                if response.status_code == 200:
-                    st.markdown(response.json()['choices'][0]['message']['content'])
-                else:
-                    st.error(f"Ошибка локального API: {response.status_code} - {response.text}")
-            
+            if response.status_code == 200:
+                st.markdown(response.json()['choices'][0]['message']['content'])
+            else:
+                st.error(f"Ошибка GigaChat API: {response.status_code} - {response.text}")
         except Exception as e:
             st.error(f"Ошибка API: {e}")
 
@@ -589,7 +575,7 @@ def main():
     st.sidebar.header("1. Загрузите данные")
     uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
 
-    global df, df_clean, ml_task, ai_provider, selected_model
+    global df, df_clean, ml_task
     df = None
     df_clean = None
 
