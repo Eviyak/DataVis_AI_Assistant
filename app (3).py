@@ -163,16 +163,32 @@ def mark_anomalies(df):
         return df
 
 def prepare_data_for_ml(df, target_column):
-    le = LabelEncoder()
-    for col in df.columns:
-        if df[col].dtype == 'object':
-            df[col] = le.fit_transform(df[col].astype(str))
+    df_processed = df.copy()
     
-    X = df.drop(columns=[target_column])
-    y = df[target_column]
+    le = LabelEncoder()
+    for col in df_processed.columns:
+        if df_processed[col].dtype == 'object' or is_categorical_dtype(df_processed[col]):
+            df_processed[col] = df_processed[col].fillna('Missing').astype(str)
+            df_processed[col] = le.fit_transform(df_processed[col])
+    
+    if target_column in df_processed.columns:
+        if df_processed[target_column].dtype == 'object' or is_categorical_dtype(df_processed[target_column]):
+            df_processed[target_column] = le.fit_transform(df_processed[target_column])
+    
+    X = df_processed.drop(columns=[target_column])
+    y = df_processed[target_column]
+    
+    for col in X.columns:
+        if not is_numeric_dtype(X[col]):
+            X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
     
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    try:
+        X_scaled = scaler.fit_transform(X)
+    except Exception as e:
+        st.error(f"Ошибка при масштабировании данных: {str(e)}")
+        st.write("Проблемные данные:", X.dtypes)
+        raise e
     
     return X_scaled, y, scaler
 
