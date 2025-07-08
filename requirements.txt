@@ -2,13 +2,7 @@ streamlit
 pandas
 numpy
 plotly
+openai
 scikit-learn
-shap
-matplotlib
-seaborn
-joblib
-transformers
-torch
-protobuf
-tqdm
+xlrd
 openpyxl
