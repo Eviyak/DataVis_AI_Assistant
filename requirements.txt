@@ -9,6 +9,5 @@ seaborn
 joblib
 transformers
 torch
-sentencepiece
 protobuf
 tqdm
