@@ -17,13 +17,12 @@ import seaborn as sns
 import joblib
 from datetime import datetime
 from pandas.api.types import is_numeric_dtype, is_categorical_dtype
-from requests.auth import HTTPBasicAuth
 import base64
+import uuid
 import urllib3
 
-# Отключение предупреждений о SSL
+# Отключение предупреждений
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 warnings.filterwarnings('ignore')
 
 # Настройки страницы
@@ -33,33 +32,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Конфигурация GigaChat
-MODEL_CONFIG = {
-    "gigachat": {
-        "api_url": "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
-        "auth_url": "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-        "scope": "GIGACHAT_API_PERS",
-        "headers": {
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-    }
-}
-
-# Аутентификация GigaChat
-st.sidebar.header("Настройки GigaChat")
-ai_provider = "gigachat"  # Фиксированный провайдер
-
-if 'GIGACHAT_CREDENTIALS' in st.secrets:
-    client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id']
-    client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret']
-    MODEL_CONFIG[ai_provider]["auth"] = HTTPBasicAuth(client_id, client_secret)
-else:
-    client_id = st.sidebar.text_input("Client ID", type="password")
-    client_secret = st.sidebar.text_input("Client Secret", type="password")
-    if client_id and client_secret:
-        MODEL_CONFIG[ai_provider]["auth"] = HTTPBasicAuth(client_id, client_secret)
 
 # Стилизация
 st.markdown("""
@@ -79,6 +51,7 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
+# Функции загрузки и обработки данных
 @st.cache_data(show_spinner="Загружаю данные... ⏳", ttl=3600, max_entries=3)
 def load_data(uploaded_file):
     try:
@@ -141,31 +114,28 @@ def fill_missing_values(df):
 
 def mark_anomalies(df):
     num_cols = df.select_dtypes(include=np.number).columns.tolist()
-    
     if len(num_cols) == 0:
         return df
     
     df_processed = df.copy()
-    
     X = df_processed[num_cols].values
     X = np.nan_to_num(X)
     
     try:
         iso = IsolationForest(contamination=0.05, random_state=42)
         preds = iso.fit_predict(X)
-        
         df_processed['anomaly'] = preds
         df_processed['anomaly'] = df_processed['anomaly'].map({1: 0, -1: 1})
-        
         return df_processed
     except Exception as e:
         st.error(f"Ошибка при обнаружении аномалий: {str(e)}")
         return df
 
+# Функции ML
 def prepare_data_for_ml(df, target_column):
     df_processed = df.copy()
-    
     le = LabelEncoder()
+    
     for col in df_processed.columns:
         if df_processed[col].dtype == 'object' or is_categorical_dtype(df_processed[col]):
             df_processed[col] = df_processed[col].fillna('Missing').astype(str)
@@ -198,7 +168,6 @@ def train_model(X, y, problem_type):
     
     if problem_type == "classification":
         model = RandomForestClassifier(n_estimators=100, random_state=42)
-        model_name = "Random Forest (Классификация)"
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
@@ -206,7 +175,6 @@ def train_model(X, y, problem_type):
         metrics = {"Точность": accuracy}
     else:
         model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model_name = "Random Forest (Регрессия)"
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         mse = mean_squared_error(y_test, y_pred)
@@ -227,23 +195,14 @@ def generate_shap_plot(model, X, feature_names):
     plt.tight_layout()
     return plt.gcf()
 
-import uuid  
-
-import requests
-import base64
-import uuid
-import streamlit as st
-from urllib.parse import quote
-
+# Рабочая аутентификация GigaChat
 def get_gigachat_token():
-    import uuid
-    from requests.auth import HTTPBasicAuth
-
+    """Получение токена для GigaChat API"""
     try:
         if 'GIGACHAT_CREDENTIALS' not in st.secrets:
-            st.error("Учетные данные не найдены в секретах Streamlit")
+            st.error("Учетные данные не найдены в секретах")
             return None
-
+            
         client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id'].strip()
         client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret'].strip()
 
@@ -251,110 +210,48 @@ def get_gigachat_token():
             st.error("Client ID или Secret пусты")
             return None
 
-        rq_uid = str(uuid.uuid4())
-
+        # Формируем Basic Auth
+        auth_string = f"{client_id}:{client_secret}"
+        base64_auth = base64.b64encode(auth_string.encode()).decode('utf-8').strip()
+        
+        # Заголовки запроса
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json',
-            'RqUID': rq_uid
+            'RqUID': str(uuid.uuid4()),
+            'Authorization': f'Basic {base64_auth}'
         }
-
-        data = {
-            'scope': 'GIGACHAT_API_PERS'
-        }
-
+        
+        # Тело запроса
+        data = 'scope=GIGACHAT_API_PERS'
+        
+        # Отправка запроса
         response = requests.post(
             "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-            auth=HTTPBasicAuth(client_id, client_secret),
             headers=headers,
             data=data,
             verify=False,
             timeout=10
         )
-
+        
         if response.status_code == 200:
             return response.json().get('access_token')
         else:
-            error_msg = f"""
-            ❌ Ошибка аутентификации ({response.status_code}):
-            RqUID: {rq_uid}
-            Ответ сервера: {response.text}
-            """
-            st.error(error_msg)
-            return None
-
-    except requests.exceptions.RequestException as e:
-        st.error(f"Ошибка сети при запросе токена: {str(e)}")
-        return None
-    except Exception as e:
-        st.error(f"Неожиданная ошибка: {str(e)}")
-        return None
-
-
-# 2. Функция для выполнения запросов к API
-def call_gigachat_api(endpoint, method="GET", payload=None):
-    """Выполняет запрос к GigaChat API"""
-    access_token = get_gigachat_token()
-    if not access_token:
-        return None
-    
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {access_token}'
-    }
-    
-    try:
-        response = requests.request(
-            method,
-            f"https://gigachat.devices.sberbank.ru/api/v1/{endpoint}",
-            headers=headers,
-            json=payload,
-            verify=False,
-            timeout=15
-        )
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Ошибка API ({response.status_code}): {response.text}")
+            error_detail = {
+                'status_code': response.status_code,
+                'response': response.text,
+                'auth_header': f"Basic {base64_auth[:10]}..."
+            }
+            st.error(f"Ошибка аутентификации:\n{json.dumps(error_detail, indent=2)}")
             return None
             
     except Exception as e:
-        st.error(f"Ошибка при вызове API: {str(e)}")
+        st.error(f"Ошибка при получении токена: {str(e)}")
         return None
 
-# 3. Пример использования в Streamlit
-def main():
-    st.title("GigaChat API Integration")
-    
-    if st.button("Получить список моделей"):
-        with st.spinner("Запрашиваю доступные модели..."):
-            models = call_gigachat_api("models")
-            if models:
-                st.json(models)
-    
-    if st.button("Задать вопрос"):
-        prompt = st.text_input("Ваш вопрос:")
-        if prompt:
-            with st.spinner("Обрабатываю запрос..."):
-                response = call_gigachat_api(
-                    "chat/completions",
-                    method="POST",
-                    payload={
-                        "model": "GigaChat",
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.7,
-                        "max_tokens": 1000
-                    }
-                )
-                if response:
-                    st.write(response['choices'][0]['message']['content'])
-
-if __name__ == "__main__":
-    main()
-
+# Функции работы с GigaChat API
 def generate_ai_report(df, model, problem_type, target, metrics):
-    """Генерирует журналистский отчет с помощью GigaChat API"""
+    """Генерация отчета с помощью GigaChat"""
     prompt = f"""
 Ты - журналист-аналитик с опытом в data science. Подготовь отчет о результатах анализа данных и построенной модели машинного обучения.
 
@@ -414,7 +311,7 @@ def generate_ai_report(df, model, problem_type, target, metrics):
         return f"Ошибка вызова GigaChat API: {str(e)}"
 
 def generate_flourish_recommendations(df, target):
-    """Генерирует рекомендации по визуализациям в Flourish"""
+    """Генерация рекомендаций по визуализациям"""
     prompt = f"""
 На основе данных с колонками: {list(df.columns)} и целевой переменной '{target}', 
 предложи 3 оптимальных типа визуализаций для Flourish. Для каждого укажи:
@@ -645,7 +542,7 @@ def show_report_tab():
         
         try:
             response = requests.post(
-                MODEL_CONFIG["gigachat"]["api_url"],
+                "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
                 headers=headers,
                 json={
                     "model": "GigaChat",
