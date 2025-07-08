@@ -197,7 +197,7 @@ if uploaded_file:
         df = reduce_mem_usage(df)
         st.success(f"Файл загружен: {uploaded_file.name} ({df.shape[0]} строк, {df.shape[1]} колонок)")
 
-        st.subheader("\ud83d\udcc4 Предварительный просмотр данных")
+        st.subheader("📄 Предварительный просмотр данных")
         st.dataframe(df.head())
 
         with st.spinner("\ud83e\uddfc Автоматически очищаю данные..."):
