@@ -1,7 +1,9 @@
+замени нейросеть от openai на другую, где все бесплатно. 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import openai
 import io
 import json
 import warnings
@@ -16,11 +18,7 @@ import seaborn as sns
 import joblib
 from datetime import datetime
 from pandas.api.types import is_numeric_dtype, is_categorical_dtype
-import base64
-import uuid
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
 
-# Отключение предупреждений
 warnings.filterwarnings('ignore')
 
 # Настройки страницы
@@ -30,6 +28,12 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Загрузка API ключа OpenAI
+if 'OPENAI_API_KEY' in st.secrets:
+    openai.api_key = st.secrets['OPENAI_API_KEY']
+else:
+    openai.api_key = st.sidebar.text_input("Введите OpenAI API ключ:", type="password")
 
 # Стилизация
 st.markdown("""
@@ -49,25 +53,6 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# Инициализация модели для генерации текста
-@st.cache_resource
-def load_text_generation_model():
-    try:
-        model_name = "sberbank-ai/rugpt3medium_based_on_gpt2"
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name)
-        generator = pipeline(
-            'text-generation',
-            model=model,
-            tokenizer=tokenizer,
-            device='cpu'
-        )
-        return generator
-    except Exception as e:
-        st.error(f"Ошибка загрузки модели: {str(e)}")
-        return None
-
-# Функции загрузки и обработки данных
 @st.cache_data(show_spinner="Загружаю данные... ⏳", ttl=3600, max_entries=3)
 def load_data(uploaded_file):
     try:
@@ -99,6 +84,7 @@ def reduce_mem_usage(df):
                 else:
                     df[col] = df[col].astype(np.int64)
             else:
+                # Добавляем проверку на наличие числовых значений
                 if pd.api.types.is_numeric_dtype(df[col]):
                     try:
                         if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
@@ -108,6 +94,7 @@ def reduce_mem_usage(df):
                         else:
                             df[col] = df[col].astype(np.float64)
                     except:
+                        # Если возникает ошибка сравнения, оставляем исходный тип
                         df[col] = df[col].astype(np.float64)
     
     end_mem = df.memory_usage().sum() / 1024**2
@@ -130,51 +117,40 @@ def fill_missing_values(df):
 
 def mark_anomalies(df):
     num_cols = df.select_dtypes(include=np.number).columns.tolist()
+    
     if len(num_cols) == 0:
         return df
     
     df_processed = df.copy()
+    
     X = df_processed[num_cols].values
     X = np.nan_to_num(X)
     
     try:
+        # Инициализируем и обучаем модель
         iso = IsolationForest(contamination=0.05, random_state=42)
         preds = iso.fit_predict(X)
+        
+        # Добавляем метки аномалий в DataFrame
         df_processed['anomaly'] = preds
         df_processed['anomaly'] = df_processed['anomaly'].map({1: 0, -1: 1})
+        
         return df_processed
     except Exception as e:
         st.error(f"Ошибка при обнаружении аномалий: {str(e)}")
         return df
 
-# Функции ML
 def prepare_data_for_ml(df, target_column):
-    df_processed = df.copy()
     le = LabelEncoder()
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = le.fit_transform(df[col].astype(str))
     
-    for col in df_processed.columns:
-        if df_processed[col].dtype == 'object' or is_categorical_dtype(df_processed[col]):
-            df_processed[col] = df_processed[col].fillna('Missing').astype(str)
-            df_processed[col] = le.fit_transform(df_processed[col])
-    
-    if target_column in df_processed.columns:
-        if df_processed[target_column].dtype == 'object' or is_categorical_dtype(df_processed[target_column]):
-            df_processed[target_column] = le.fit_transform(df_processed[target_column])
-    
-    X = df_processed.drop(columns=[target_column])
-    y = df_processed[target_column]
-    
-    for col in X.columns:
-        if not is_numeric_dtype(X[col]):
-            X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
+    X = df.drop(columns=[target_column])
+    y = df[target_column]
     
     scaler = StandardScaler()
-    try:
-        X_scaled = scaler.fit_transform(X)
-    except Exception as e:
-        st.error(f"Ошибка при масштабировании данных: {str(e)}")
-        st.write("Проблемные данные:", X.dtypes)
-        raise e
+    X_scaled = scaler.fit_transform(X)
     
     return X_scaled, y, scaler
 
@@ -184,6 +160,7 @@ def train_model(X, y, problem_type):
     
     if problem_type == "classification":
         model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model_name = "Random Forest (Классификация)"
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
@@ -191,6 +168,7 @@ def train_model(X, y, problem_type):
         metrics = {"Точность": accuracy}
     else:
         model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model_name = "Random Forest (Регрессия)"
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         mse = mean_squared_error(y_test, y_pred)
@@ -212,92 +190,80 @@ def generate_shap_plot(model, X, feature_names):
     return plt.gcf()
 
 def generate_ai_report(df, model, problem_type, target, metrics):
-    """Генерация структурированного отчета с улучшенным промптом"""
+    if not openai.api_key:
+        return "🔑 Ключ OpenAI API не установлен. Добавьте его в настройках."
+    
     prompt = f"""
-Ты - опытный журналист-аналитик. Напиши четкий отчет по следующим данным:
+Ты - журналист-аналитик с опытом в data science. Подготовь отчет о результатах анализа данных и построенной модели машинного обучения.
 
-ДАННЫЕ:
-- Размер: {df.shape[0]} строк, {df.shape[1]} колонок
+Данные:
+- Количество наблюдений: {df.shape[0]}
+- Количество признаков: {df.shape[1]}
 - Целевая переменная: {target}
-- Тип анализа: {'Классификация' if problem_type == 'classification' else 'Регрессия'}
-- Метрики: {json.dumps(metrics, indent=2)}
+- Тип задачи: {'Классификация' if problem_type == 'classification' else 'Регрессия'}
 
-СОЗДАЙ ОТЧЕТ ПО СХЕМЕ:
-1. [Краткий вывод] Основной инсайт в одном предложении
-2. [Что найдено] Конкретные обнаруженные закономерности
-3. [Как использовать] Практическое применение для журналистики
-4. [Ограничения] Что нужно учитывать при интерпретации
-5. [Что дальше] Рекомендации по дальнейшему анализу
+Метрики модели:
+{json.dumps(metrics, indent=2)}
 
-ТРЕБОВАНИЯ:
-- Только факты, без воды
-- Максимум 5 предложений в каждом пункте
-- Используй маркированные списки
-- Пиши простым языком
+Важные переменные (первые 5):
+{df.columns.tolist()[:5]}
+
+Сгенерируй:
+1. Простое объяснение что делает модель
+2. Ключевые инсайты о важных признаках
+3. Как журналист может использовать эти результаты в статье
+4. Ограничения анализа
+5. Рекомендации по дальнейшему исследованию
+
+Пиши кратко, понятно, без технического жаргона. Используй маркированные списки.
 """
-    
     try:
-        generator = load_text_generation_model()
-        if not generator:
-            return "Ошибка: модель не загружена"
-        
-        report = generator(
-            prompt,
-            max_length=1500,
-            temperature=0.5,  # Уменьшаем "креативность"
-            top_p=0.9,
-            repetition_penalty=1.2,
-            no_repeat_ngram_size=3
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Ты журналист-аналитик, объясняющий сложные ML-концепты простым языком."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.6,
+            max_tokens=1500
         )
-        
-        text = report[0]['generated_text'].replace(prompt, "").strip()
-        return postprocess_report(text)
+        return response['choices'][0]['message']['content']
     except Exception as e:
-        return f"Ошибка генерации: {str(e)}"
+        return f"Ошибка вызова OpenAI API: {str(e)}"
 
-def postprocess_report(text):
-    """Очистка и форматирование отчета"""
-    # Удаляем технические артефакты
-    for artifact in ["<|endoftext|>", "Рисунок", "PyCharm", "Namespace"]:
-        text = text.replace(artifact, "")
-    
-    # Разбиваем на пункты
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
-    return "\n\n".join(lines)
-    
 def generate_flourish_recommendations(df, target):
-    prompt = f"""
-Данные содержат колонки: {list(df.columns)}
-Целевой показатель: {target}
-
-Сгенерируй 3 конкретных типа визуализации в формате:
-- **Тип**: [тип графика]
-  **Данные**: [какие колонки использовать]
-  **Почему**: [обоснование]
-  **Совет**: [как настроить во Flourish]
-
-Пример:
-- **Тип**: Точечная диаграмма
-  **Данные**: Возраст, Доход
-  **Почему**: Покажет корреляцию между возрастом и доходом
-  **Совет**: Добавьте третий параметр (размер точек) по целевой переменной
-"""
+    if not openai.api_key:
+        return None
     
+    prompt = f"""
+На основе данных с колонками: {list(df.columns)} и целевой переменной '{target}', 
+предложи 3 оптимальных типа визуализаций для Flourish. Для каждого укажи:
+
+1. Тип визуализации
+2. Какие колонки использовать
+3. Почему это будет эффективно
+4. Рекомендации по настройке во Flourish
+
+Пример ответа:
+- **Тип**: Интерактивная карта
+  **Колонки**: Регион, {target}
+  **Обоснование**: Позволяет показать географическое распределение показателя
+  **Настройки**: Использовать российские регионы в формате GeoJSON
+"""
     try:
-        generator = load_text_generation_model()
-        if not generator:
-            return "Ошибка: модель не загружена"
-        
-        response = generator(
-            prompt,
-            max_length=1000,
-            temperature=0.3,  # Минимум случайности
-            top_p=0.9
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Ты эксперт по визуализации данных для журналистики."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=1000
         )
-        
-        return response[0]['generated_text'].replace(prompt, "").strip()
+        return response['choices'][0]['message']['content']
     except Exception as e:
-        return f"Ошибка генерации: {str(e)}"
+        return f"Ошибка OpenAI API: {e}"
+
 def cluster_data(df, n_clusters):
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
     
@@ -326,11 +292,13 @@ def show_results_tab():
         if st.session_state['problem_type'] == "classification" and st.session_state['cm'] is not None:
             st.write("### Матрица ошибок")
             try:
+                # Получаем уникальные классы из тестовых и предсказанных значений
                 all_classes = np.unique(np.concatenate([
                     st.session_state['y_test'], 
                     st.session_state['y_pred']
                 ]))
                 
+                # Создаем фигуру для матрицы ошибок
                 fig, ax = plt.subplots(figsize=(8, 6))
                 ConfusionMatrixDisplay.from_predictions(
                     st.session_state['y_test'],
@@ -346,6 +314,7 @@ def show_results_tab():
             except Exception as e:
                 st.error(f"Ошибка при построении матрицы ошибок: {str(e)}")
                 
+                # Альтернативное отображение матрицы ошибок
                 try:
                     cm = confusion_matrix(st.session_state['y_test'], st.session_state['y_pred'])
                     unique_classes = np.unique(np.concatenate([
@@ -353,6 +322,7 @@ def show_results_tab():
                         st.session_state['y_pred']
                     ]))
                     
+                    # Проверяем соответствие размеров матрицы и меток
                     if cm.shape[0] == len(unique_classes) and cm.shape[1] == len(unique_classes):
                         st.write(pd.DataFrame(
                             cm,
@@ -432,25 +402,26 @@ def show_report_tab():
     st.subheader("Журналистский отчет")
     
     if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
-        with st.spinner("🧠 Генерирую отчет (это может занять до 30 секунд)..."):
-            report = generate_ai_report(
-                st.session_state['df'],
-                st.session_state['model'],
-                st.session_state['problem_type'],
-                st.session_state['target'],
-                st.session_state['metrics']
-            )
+        report = generate_ai_report(
+            st.session_state['df'],
+            st.session_state['model'],
+            st.session_state['problem_type'],
+            st.session_state['target'],
+            st.session_state['metrics']
+        )
         st.markdown(report)
         
         st.divider()
         
         st.write("### Рекомендации по визуализациям (Flourish)")
-        with st.spinner("🖼️ Генерирую рекомендации..."):
-            flourish_recs = generate_flourish_recommendations(
-                st.session_state['df'],
-                st.session_state['target']
-            )
-        st.markdown(flourish_recs)
+        flourish_recs = generate_flourish_recommendations(
+            st.session_state['df'],
+            st.session_state['target']
+        )
+        if flourish_recs:
+            st.markdown(flourish_recs)
+        else:
+            st.warning("Не удалось сгенерировать рекомендации для Flourish")
     
     elif ml_task == "Кластеризация":
         st.write("### Интерпретация кластеров")
@@ -466,20 +437,28 @@ def show_report_tab():
 2. Как можно назвать каждый кластер
 3. Идеи для статей на основе кластерного анализа
 """
-        with st.spinner("🧠 Анализирую кластеры..."):
-            cluster_report = generate_ai_report(
-                st.session_state['df'],
-                None,
-                "clustering",
-                "Cluster",
-                {"Количество кластеров": len(st.session_state['cluster_analysis'])}
-            )
-        st.markdown(cluster_report)
+        try:
+            if openai.api_key:
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Ты журналист-аналитик, специализирующийся на кластерном анализе."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=1500
+                )
+                st.markdown(response['choices'][0]['message']['content'])
+            else:
+                st.warning("Для генерации отчета требуется OpenAI API ключ")
+        except Exception as e:
+            st.error(f"Ошибка OpenAI API: {e}")
 
 def show_settings_tab():
     st.subheader("Настройки модели")
     
     if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
+        # Создаем буфер в памяти для сохранения модели
         buffer = io.BytesIO()
         joblib.dump(st.session_state['model'], buffer)
         buffer.seek(0)
@@ -492,22 +471,16 @@ def show_settings_tab():
         )
         
         st.write("### Тестовый прогноз")
-        sample = df_clean.drop(columns=[st.session_state['target']], errors='ignore').iloc[0:1]
+        sample = df_clean.drop(columns=[st.session_state['target']]).iloc[0:1]
         st.write("Данные для прогноза:")
         st.dataframe(sample)
         
         if st.button("Сделать прогноз"):
-            try:
-                if st.session_state['target'] not in df_clean.columns:
-                    st.error(f"Целевая колонка '{st.session_state['target']}' не найдена в данных")
-                    return
-                
-                sample_prepared = prepare_data_for_ml(sample, st.session_state['target'])[0]
-                prediction = st.session_state['model'].predict(sample_prepared)
-                st.metric(label="Прогноз", value=prediction[0])
-            except Exception as e:
-                st.error(f"Ошибка при прогнозировании: {str(e)}")
+            sample_prepared = prepare_data_for_ml(sample, st.session_state['target'])[0]
+            prediction = st.session_state['model'].predict(sample_prepared)
+            st.metric(label="Прогноз", value=prediction[0])
 
+# Основной интерфейс
 def main():
     st.sidebar.header("1. Загрузите данные")
     uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
@@ -596,6 +569,7 @@ def main():
                         
                         st.success(f"✅ Данные разбиты на {n_clusters} кластеров!")
             
+            # Проверяем, есть ли что показывать во вкладках
             show_tabs = False
             if ml_task in ["Прогнозирование (регрессия)", "Классификация"] and 'model' in st.session_state:
                 show_tabs = True
