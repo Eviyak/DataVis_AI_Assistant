@@ -7,9 +7,7 @@ shap
 matplotlib
 seaborn
 joblib
-requests
-openpyxl
-xlrd
-python-dateutil
-urllib3
-pyOpenSSL
+transformers
+torch
+sentencepiece
+tqdm
