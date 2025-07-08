@@ -227,53 +227,64 @@ def generate_shap_plot(model, X, feature_names):
     plt.tight_layout()
     return plt.gcf()
 
+import uuid  
+
 def get_gigachat_token():
-    """Альтернативный метод получения токена с ручным формированием запроса"""
+    
     try:
         if 'GIGACHAT_CREDENTIALS' not in st.secrets:
-            st.error("Учетные данные не найдены в секретах")
+            st.error("Учетные данные не найдены в секретах Streamlit")
             return None
 
         client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id']
         client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret']
         
-    
-        auth_str = f"{client_id}:{client_secret}"
-        auth_b64 = base64.b64encode(auth_str.encode()).decode('utf-8')
+        
+        credentials = f"{client_id}:{client_secret}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode('utf-8')
         
        
-        data = "scope=GIGACHAT_API_PERS"
+        rq_uid = str(uuid.uuid4())
         
-       
-        import http.client
-        conn = http.client.HTTPSConnection("ngw.devices.sberbank.ru", 9443)
         
         headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-            "RqUID": str(uuid.uuid4()),
-            "Authorization": f"Basic {auth_b64}"
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'RqUID': rq_uid,
+            'Authorization': f'Basic {encoded_credentials}'
         }
         
-        conn.request("POST", "/api/v2/oauth", body=data, headers=headers)
+        data = {
+            'scope': 'GIGACHAT_API_PERS'
+        }
         
-        response = conn.getresponse()
-        response_data = response.read().decode()
+        # 4. Отправляем запрос с таймаутом
+        response = requests.post(
+            "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            headers=headers,
+            data=data,
+            verify=False,
+            timeout=10
+        )
         
-        if response.status == 200:
-            return json.loads(response_data).get('access_token')
+        # 5. Обрабатываем ответ
+        if response.status_code == 200:
+            return response.json().get('access_token')
         else:
             error_msg = f"""
-            Ошибка аутентификации ({response.status}):
-            Ответ сервера: {response_data}
-            Client ID: {client_id}
-            Auth Header: Basic {auth_b64[:10]}...
+            Ошибка аутентификации ({response.status_code}):
+            Заголовок Authorization: Basic {encoded_credentials[:10]}...
+            RqUID: {rq_uid}
+            Ответ сервера: {response.text}
             """
             st.error(error_msg)
             return None
             
+    except requests.exceptions.RequestException as e:
+        st.error(f"Ошибка сети при запросе токена: {str(e)}")
+        return None
     except Exception as e:
-        st.error(f"Ошибка соединения: {str(e)}")
+        st.error(f"Неожиданная ошибка: {str(e)}")
         return None
 
 def generate_ai_report(df, model, problem_type, target, metrics):
