@@ -237,6 +237,7 @@ from urllib.parse import quote
 
 def get_gigachat_token():
     import uuid
+    from requests.auth import HTTPBasicAuth
 
     try:
         if 'GIGACHAT_CREDENTIALS' not in st.secrets:
@@ -246,23 +247,16 @@ def get_gigachat_token():
         client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id'].strip()
         client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret'].strip()
 
-        # Проверка наличия client_id и client_secret
         if not client_id or not client_secret:
             st.error("Client ID или Secret пусты")
             return None
 
-        # Уникальный идентификатор запроса
         rq_uid = str(uuid.uuid4())
-
-        # Кодировка client_id:client_secret в base64
-        credentials = f"{client_id}:{client_secret}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode('utf-8')
 
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json',
-            'RqUID': rq_uid,
-            'Authorization': f'Basic {encoded_credentials}'
+            'RqUID': rq_uid
         }
 
         data = {
@@ -271,6 +265,7 @@ def get_gigachat_token():
 
         response = requests.post(
             "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            auth=HTTPBasicAuth(client_id, client_secret),
             headers=headers,
             data=data,
             verify=False,
@@ -294,6 +289,7 @@ def get_gigachat_token():
     except Exception as e:
         st.error(f"Неожиданная ошибка: {str(e)}")
         return None
+
 
 # 2. Функция для выполнения запросов к API
 def call_gigachat_api(endpoint, method="GET", payload=None):
