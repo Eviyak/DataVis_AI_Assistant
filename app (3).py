@@ -5,7 +5,6 @@ import plotly.express as px
 import io
 import json
 import warnings
-import requests
 from sklearn.ensemble import IsolationForest, RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_squared_error, confusion_matrix, ConfusionMatrixDisplay
@@ -19,10 +18,9 @@ from datetime import datetime
 from pandas.api.types import is_numeric_dtype, is_categorical_dtype
 import base64
 import uuid
-import urllib3
+from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
 
 # Отключение предупреждений
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore')
 
 # Настройки страницы
@@ -50,6 +48,24 @@ st.markdown("""
     <p style="color:#666;">Загрузите данные → Выберите задачу → Получите готовую модель и инсайты</p>
     </div>
 """, unsafe_allow_html=True)
+
+# Инициализация модели для генерации текста
+@st.cache_resource
+def load_text_generation_model():
+    try:
+        model_name = "sberbank-ai/rugpt3medium_based_on_gpt2"
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(model_name)
+        generator = pipeline(
+            'text-generation',
+            model=model,
+            tokenizer=tokenizer,
+            device='cpu'
+        )
+        return generator
+    except Exception as e:
+        st.error(f"Ошибка загрузки модели: {str(e)}")
+        return None
 
 # Функции загрузки и обработки данных
 @st.cache_data(show_spinner="Загружаю данные... ⏳", ttl=3600, max_entries=3)
@@ -195,129 +211,59 @@ def generate_shap_plot(model, X, feature_names):
     plt.tight_layout()
     return plt.gcf()
 
-# Рабочая аутентификация GigaChat
-def get_gigachat_token():
-    """Получение токена для GigaChat API"""
-    try:
-        if 'GIGACHAT_CREDENTIALS' not in st.secrets:
-            st.error("Учетные данные не найдены в секретах")
-            return None
-            
-        client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id'].strip()
-        client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret'].strip()
-
-        if not client_id or not client_secret:
-            st.error("Client ID или Secret пусты")
-            return None
-
-        # Формируем Basic Auth
-        auth_string = f"{client_id}:{client_secret}"
-        base64_auth = base64.b64encode(auth_string.encode()).decode('utf-8').strip()
-        
-        # Заголовки запроса
-        headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json',
-            'RqUID': str(uuid.uuid4()),
-            'Authorization': f'Basic {base64_auth}'
-        }
-        
-        # Тело запроса
-        data = 'scope=GIGACHAT_API_PERS'
-        
-        # Отправка запроса
-        response = requests.post(
-            "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-            headers=headers,
-            data=data,
-            verify=False,
-            timeout=30  # Увеличили таймаут
-        )
-        
-        if response.status_code == 200:
-            token_response = response.json()
-            access_token = token_response.get('access_token')
-            if access_token:
-                return access_token
-            else:
-                st.error("Отсутствует ключ доступа в ответе сервера.")
-                return None
-        else:
-            error_detail = {
-                'status_code': response.status_code,
-                'response': response.text,
-                'auth_header': f"Basic {base64_auth[:10]}..."
-            }
-            st.error(f"Ошибка аутентификации:\n{json.dumps(error_detail, indent=2)}")
-            return None
-            
-    except Exception as e:
-        st.error(f"Ошибка при получении токена: {str(e)}")
-        return None
-
-# Функции работы с GigaChat API
 def generate_ai_report(df, model, problem_type, target, metrics):
-    """Генерация отчета с помощью GigaChat"""
+    """Генерация отчета с помощью локальной модели"""
+    generator = load_text_generation_model()
+    if not generator:
+        return "Не удалось загрузить модель для генерации отчета"
+    
     prompt = f"""
-Ты - журналист-аналитик с опытом в data science. Подготовь отчет о результатах анализа данных и построенной модели машинного обучения.
+Задача: Подготовь журналистский отчет на основе анализа данных.
 
-Данные:
-- Количество наблюдений: {df.shape[0]}
-- Количество признаков: {df.shape[1]}
+Контекст:
+- Анализируемые данные: {df.shape[0]} строк, {df.shape[1]} колонок
 - Целевая переменная: {target}
 - Тип задачи: {'Классификация' if problem_type == 'classification' else 'Регрессия'}
+- Метрики модели: {json.dumps(metrics, indent=2)}
 
-Метрики модели:
-{json.dumps(metrics, indent=2)}
+Инструкции:
+1. Объясни простым языком, что делает модель
+2. Выдели ключевые инсайты
+3. Предложи как использовать результаты в статье
+4. Укажи ограничения анализа
+5. Дай рекомендации по дальнейшему исследованию
 
-Важные переменные (первые 5):
-{df.columns.tolist()[:5]}
+Требования:
+- Пиши кратко, понятно, без технического жаргона
+- Используй маркированные списки
+- Будь точным и информативным
 
-Сгенерируй:
-1. Простое объяснение что делает модель
-2. Ключевые инсайты о важных признаках
-3. Как журналист может использовать эти результаты в статье
-4. Ограничения анализа
-5. Рекомендации по дальнейшему исследованию
-
-Пиши кратко, понятно, без технического жаргона. Используй маркированные списки.
+Отчет:
 """
-    
-    access_token = get_gigachat_token()
-    if not access_token:
-        return "🔑 Ошибка аутентификации в GigaChat"
-    
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    
     try:
-        response = requests.post(
-            "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
-            headers=headers,
-            json={
-                "model": "GigaChat",
-                "messages": [
-                    {"role": "system", "content": "Ты журналист-аналитик, объясняющий сложные ML-концепты простым языком."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.6,
-                "max_tokens": 1500
-            },
-            verify=False
+        report = generator(
+            prompt,
+            max_length=1500,
+            num_return_sequences=1,
+            temperature=0.7,
+            top_p=0.9,
+            do_sample=True,
+            pad_token_id=50256,
+            no_repeat_ngram_size=3
         )
         
-        if response.status_code == 200:
-            return response.json()['choices'][0]['message']['content']
-        else:
-            return f"Ошибка GigaChat API: {response.status_code} - {response.text}"
+        generated_text = report[0]['generated_text']
+        generated_text = generated_text.replace(prompt, "").strip()
+        return generated_text
     except Exception as e:
-        return f"Ошибка вызова GigaChat API: {str(e)}"
+        return f"Ошибка генерации отчета: {str(e)}"
 
 def generate_flourish_recommendations(df, target):
     """Генерация рекомендаций по визуализациям"""
+    generator = load_text_generation_model()
+    if not generator:
+        return "Не удалось загрузить модель для генерации рекомендаций"
+    
     prompt = f"""
 На основе данных с колонками: {list(df.columns)} и целевой переменной '{target}', 
 предложи 3 оптимальных типа визуализаций для Flourish. Для каждого укажи:
@@ -332,40 +278,19 @@ def generate_flourish_recommendations(df, target):
   **Колонки**: Регион, {target}
   **Обоснование**: Позволяет показать географическое распределение показателя
   **Настройки**: Использовать российские регионы в формате GeoJSON
+
+Рекомендации:
 """
-    
-    access_token = get_gigachat_token()
-    if not access_token:
-        return "🔑 Ошибка аутентификации в GigaChat"
-    
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    
     try:
-        response = requests.post(
-            "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
-            headers=headers,
-            json={
-                "model": "GigaChat",
-                "messages": [
-                    {"role": "system", "content": "Ты эксперт по визуализации данных для журналистики."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 1000
-            },
-            verify=False
+        recommendations = generator(
+            prompt,
+            max_length=1000,
+            temperature=0.7,
+            top_p=0.9
         )
-        
-        if response.status_code == 200:
-            return response.json()['choices'][0]['message']['content']
-        else:
-            return f"Ошибка GigaChat API: {response.status_code} - {response.text}"
+        return recommendations[0]['generated_text'].replace(prompt, "").strip()
     except Exception as e:
-        return f"Ошибка вызова GigaChat API: {str(e)}"
+        return f"Ошибка генерации рекомендаций: {str(e)}"
 
 def cluster_data(df, n_clusters):
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
@@ -501,26 +426,25 @@ def show_report_tab():
     st.subheader("Журналистский отчет")
     
     if ml_task in ["Прогнозирование (регрессия)", "Классификация"]:
-        report = generate_ai_report(
-            st.session_state['df'],
-            st.session_state['model'],
-            st.session_state['problem_type'],
-            st.session_state['target'],
-            st.session_state['metrics']
-        )
+        with st.spinner("🧠 Генерирую отчет (это может занять до 30 секунд)..."):
+            report = generate_ai_report(
+                st.session_state['df'],
+                st.session_state['model'],
+                st.session_state['problem_type'],
+                st.session_state['target'],
+                st.session_state['metrics']
+            )
         st.markdown(report)
         
         st.divider()
         
         st.write("### Рекомендации по визуализациям (Flourish)")
-        flourish_recs = generate_flourish_recommendations(
-            st.session_state['df'],
-            st.session_state['target']
-        )
-        if flourish_recs:
-            st.markdown(flourish_recs)
-        else:
-            st.warning("Не удалось сгенерировать рекомендации для Flourish")
+        with st.spinner("🖼️ Генерирую рекомендации..."):
+            flourish_recs = generate_flourish_recommendations(
+                st.session_state['df'],
+                st.session_state['target']
+            )
+        st.markdown(flourish_recs)
     
     elif ml_task == "Кластеризация":
         st.write("### Интерпретация кластеров")
@@ -536,38 +460,15 @@ def show_report_tab():
 2. Как можно назвать каждый кластер
 3. Идеи для статей на основе кластерного анализа
 """
-        access_token = get_gigachat_token()
-        if not access_token:
-            st.warning("Для генерации отчета требуется аутентификация в GigaChat")
-            return
-        
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        }
-        
-        try:
-            response = requests.post(
-                "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
-                headers=headers,
-                json={
-                    "model": "GigaChat",
-                    "messages": [
-                        {"role": "system", "content": "Ты журналист-аналитик, специализирующийся на кластерном анализе."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.7,
-                    "max_tokens": 1500
-                },
-                verify=False
+        with st.spinner("🧠 Анализирую кластеры..."):
+            cluster_report = generate_ai_report(
+                st.session_state['df'],
+                None,
+                "clustering",
+                "Cluster",
+                {"Количество кластеров": len(st.session_state['cluster_analysis'])}
             )
-            
-            if response.status_code == 200:
-                st.markdown(response.json()['choices'][0]['message']['content'])
-            else:
-                st.error(f"Ошибка GigaChat API: {response.status_code} - {response.text}")
-        except Exception as e:
-            st.error(f"Ошибка API: {e}")
+        st.markdown(cluster_report)
 
 def show_settings_tab():
     st.subheader("Настройки модели")
@@ -585,13 +486,12 @@ def show_settings_tab():
         )
         
         st.write("### Тестовый прогноз")
-        sample = df_clean.drop(columns=[st.session_state['target']], errors='ignore').iloc[0:1]  # Добавлен errors='ignore'
+        sample = df_clean.drop(columns=[st.session_state['target']], errors='ignore').iloc[0:1]
         st.write("Данные для прогноза:")
         st.dataframe(sample)
         
         if st.button("Сделать прогноз"):
             try:
-                # Проверяем, что целевая колонка существует
                 if st.session_state['target'] not in df_clean.columns:
                     st.error(f"Целевая колонка '{st.session_state['target']}' не найдена в данных")
                     return
@@ -601,7 +501,7 @@ def show_settings_tab():
                 st.metric(label="Прогноз", value=prediction[0])
             except Exception as e:
                 st.error(f"Ошибка при прогнозировании: {str(e)}")
-# Основной интерфейс
+
 def main():
     st.sidebar.header("1. Загрузите данные")
     uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
