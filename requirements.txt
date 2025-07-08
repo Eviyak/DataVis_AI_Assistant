@@ -2,7 +2,7 @@ streamlit
 pandas
 numpy
 plotly
-openai
+openai==0.28.1
 scikit-learn
 xlrd
 openpyxl
