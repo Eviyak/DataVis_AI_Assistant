@@ -11,4 +11,5 @@ requests
 openpyxl
 xlrd
 python-dateutil
-tqdm
+urllib3
+pyOpenSSL
