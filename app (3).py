@@ -579,15 +579,22 @@ def show_settings_tab():
         )
         
         st.write("### Тестовый прогноз")
-        sample = df_clean.drop(columns=[st.session_state['target']]).iloc[0:1]
+        sample = df_clean.drop(columns=[st.session_state['target']], errors='ignore').iloc[0:1]  # Добавлен errors='ignore'
         st.write("Данные для прогноза:")
         st.dataframe(sample)
         
         if st.button("Сделать прогноз"):
-            sample_prepared = prepare_data_for_ml(sample, st.session_state['target'])[0]
-            prediction = st.session_state['model'].predict(sample_prepared)
-            st.metric(label="Прогноз", value=prediction[0])
-
+            try:
+                # Проверяем, что целевая колонка существует
+                if st.session_state['target'] not in df_clean.columns:
+                    st.error(f"Целевая колонка '{st.session_state['target']}' не найдена в данных")
+                    return
+                
+                sample_prepared = prepare_data_for_ml(sample, st.session_state['target'])[0]
+                prediction = st.session_state['model'].predict(sample_prepared)
+                st.metric(label="Прогноз", value=prediction[0])
+            except Exception as e:
+                st.error(f"Ошибка при прогнозировании: {str(e)}")
 # Основной интерфейс
 def main():
     st.sidebar.header("1. Загрузите данные")
