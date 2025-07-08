@@ -3,5 +3,12 @@ pandas
 numpy
 plotly
 scikit-learn
+shap
 matplotlib
 seaborn
+joblib
+transformers
+torch
+sentencepiece
+protobuf
+tqdm
