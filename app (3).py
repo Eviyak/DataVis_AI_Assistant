@@ -228,60 +228,52 @@ def generate_shap_plot(model, X, feature_names):
     return plt.gcf()
 
 def get_gigachat_token():
-    """Получение токена доступа для GigaChat API с точным соответствием документации"""
+    """Альтернативный метод получения токена с ручным формированием запроса"""
     try:
-        # 1. Проверяем наличие учетных данных
         if 'GIGACHAT_CREDENTIALS' not in st.secrets:
-            st.error("Учетные данные GigaChat не найдены в секретах Streamlit")
+            st.error("Учетные данные не найдены в секретах")
             return None
-            
+
         client_id = st.secrets['GIGACHAT_CREDENTIALS']['client_id']
         client_secret = st.secrets['GIGACHAT_CREDENTIALS']['client_secret']
         
-        # 2. Формируем авторизационные данные ТОЧНО как в документации
-        auth_string = f"{client_id}:{client_secret}"
+    
+        auth_str = f"{client_id}:{client_secret}"
+        auth_b64 = base64.b64encode(auth_str.encode()).decode('utf-8')
         
-        # Важное отличие: кодируем в base64 БЕЗ дополнительного кодирования в ascii
-        base64_auth = base64.b64encode(auth_string.encode()).decode()
+       
+        data = "scope=GIGACHAT_API_PERS"
         
-        # 3. Генерируем уникальный RqUID
-        import uuid
-        rq_uid = str(uuid.uuid4())
+       
+        import http.client
+        conn = http.client.HTTPSConnection("ngw.devices.sberbank.ru", 9443)
         
-        # 4. Формируем заголовки ТОЧНО как в документации
         headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json',
-            'RqUID': rq_uid,
-            'Authorization': f'Basic {base64_auth}'  # Без лишних пробелов!
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "RqUID": str(uuid.uuid4()),
+            "Authorization": f"Basic {auth_b64}"
         }
         
-        # 5. Формируем тело запроса
-        data = 'scope=GIGACHAT_API_PERS'  # Точный формат как в документации
+        conn.request("POST", "/api/v2/oauth", body=data, headers=headers)
         
-        # 6. Отправляем запрос
-        response = requests.post(
-            "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-            headers=headers,
-            data=data,  # Важно: используем data, а не json
-            verify=False
-        )
+        response = conn.getresponse()
+        response_data = response.read().decode()
         
-        # 7. Обрабатываем ответ
-        if response.status_code == 200:
-            return response.json().get('access_token')
+        if response.status == 200:
+            return json.loads(response_data).get('access_token')
         else:
-            error_detail = f"""
-            Ошибка аутентификации ({response.status_code}):
-            Ответ сервера: {response.text}
-            Использованные client_id: {client_id[:3]}...{client_id[-2:]}
-            RqUID: {rq_uid}
+            error_msg = f"""
+            Ошибка аутентификации ({response.status}):
+            Ответ сервера: {response_data}
+            Client ID: {client_id}
+            Auth Header: Basic {auth_b64[:10]}...
             """
-            st.error(error_detail)
+            st.error(error_msg)
             return None
             
     except Exception as e:
-        st.error(f"Критическая ошибка при получении токена: {str(e)}")
+        st.error(f"Ошибка соединения: {str(e)}")
         return None
 
 def generate_ai_report(df, model, problem_type, target, metrics):
