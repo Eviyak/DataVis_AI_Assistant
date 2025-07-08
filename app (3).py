@@ -195,6 +195,8 @@ def generate_viz_recommendations(df):
     except Exception as e:
         return f"Ошибка OpenAI API: {e}"
 
+# ... (все предыдущие импорты остаются без изменений)
+
 # === UI ===
 st.sidebar.header("Загрузите файл с данными")
 uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
@@ -210,6 +212,42 @@ if uploaded_file:
         summary = analyze_with_ai(df)
         st.markdown(summary)
 
+        # === ДЕТЕКЦИЯ АНОМАЛИЙ (ML-КОМПОНЕНТ) ===
+        if st.sidebar.checkbox("🔍 Найти аномалии в данных", True):
+            try:
+                numeric_cols = df.select_dtypes(include=np.number).columns
+                if len(numeric_cols) > 0:
+                    # Подготовка данных
+                    X = df[numeric_cols].fillna(df[numeric_cols].median())
+                    X_scaled = StandardScaler().fit_transform(X)
+
+                    # Модель
+                    clf = IsolationForest(contamination=0.05, random_state=42)
+                    df['anomaly_score'] = clf.fit_predict(X_scaled)
+                    anomalies = df[df['anomaly_score'] == -1]
+
+                    # Визуализация
+                    if not anomalies.empty:
+                        st.subheader("🚨 Выявленные аномалии")
+                        st.write(f"Найдено {len(anomalies)} аномалий (Isolation Forest):")
+                        st.dataframe(anomalies.head())
+
+                        # График аномалий
+                        col = numeric_cols[0]
+                        fig = px.scatter(
+                            df, x=df.index, y=col, 
+                            color=df['anomaly_score'].astype(str),
+                            title=f"Аномалии в колонке '{col}'",
+                            color_discrete_map={"-1": "red", "1": "blue"}
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.success("Аномалий не обнаружено!")
+                else:
+                    st.warning("Нет числовых колонок для анализа аномалий")
+            except Exception as e:
+                st.error(f"Ошибка при детекции аномалий: {str(e)}")
+
         st.subheader("🤖 AI Инсайты по данным")
         insights = generate_ai_insights(df)
         st.markdown(insights)
@@ -224,38 +262,3 @@ if uploaded_file:
         st.error("Не удалось загрузить данные из файла.")
 else:
     st.info("Пожалуйста, загрузите файл для анализа.")
-
-# === ДЕТЕКЦИЯ АНОМАЛИЙ (ML-КОМПОНЕНТ) ===
-if st.sidebar.checkbox("🔍 Найти аномалии в данных", True):
-    numeric_cols = df.select_dtypes(include=np.number).columns
-    if len(numeric_cols) > 0:
-        from sklearn.ensemble import IsolationForest
-        from sklearn.preprocessing import StandardScaler
-
-        # Подготовка данных
-        X = df[numeric_cols].fillna(df[numeric_cols].median())
-        X_scaled = StandardScaler().fit_transform(X)
-
-        # Модель
-        clf = IsolationForest(contamination=0.05, random_state=42)
-        df['anomaly_score'] = clf.fit_predict(X_scaled)
-        anomalies = df[df['anomaly_score'] == -1]
-
-        # Визуализация
-        if not anomalies.empty:
-            st.subheader("🚨 Выявленные аномалии")
-            st.write(f"Найдено {len(anomalies)} аномалий (Isolation Forest):")
-            st.dataframe(anomalies.head())
-
-            # График аномалий для первой числовой колонки
-            col = numeric_cols[0]
-            fig = px.scatter(
-                df, x=df.index, y=col, color=df['anomaly_score'],
-                title=f"Аномалии в колонке '{col}'", 
-                color_discrete_map={-1: 'red', 1: 'blue'}
-            )
-            st.plotly_chart(fig)
-        else:
-            st.success("Аномалий не обнаружено!")
-    else:
-        st.warning("Нет числовых колонок для анализа.")
