@@ -16,7 +16,6 @@ from pandas.api.types import is_datetime64_any_dtype
 
 warnings.filterwarnings('ignore')
 
-# Настройки страницы
 st.set_page_config(
     page_title="InsightBot Pro",
     page_icon="📊",
@@ -24,13 +23,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Загрузка API ключа OpenAI из Streamlit Secrets
 if 'OPENAI_API_KEY' in st.secrets:
     openai.api_key = st.secrets['OPENAI_API_KEY']
 else:
     openai.api_key = ""
 
-# Тема дневная (без выбора)
 st.markdown("""
     <style>
         .stApp { background-color: #f0f2f6; color: #000000; }
@@ -38,7 +35,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Заголовок
 st.title("InsightBot Pro")
 st.markdown("""
     <div style="background-color:#ffffff;padding:10px;border-radius:10px;margin-bottom:20px;">
@@ -72,7 +68,7 @@ def reduce_mem_usage(df):
                 c_min = df[col].min()
                 c_max = df[col].max()
                 if pd.isnull(c_min) or pd.isnull(c_max):
-                    continue  # пропускаем, если значения некорректны
+                    continue 
 
                 if str(col_type)[:3] == 'int':
                     if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
@@ -91,7 +87,7 @@ def reduce_mem_usage(df):
                     else:
                         df[col] = df[col].astype(np.float64)
             except (ValueError, TypeError):
-                continue  # пропускаем столбец, если возникла ошибка
+                continue 
     end_mem = df.memory_usage().sum() / 1024**2
     st.sidebar.info(f"Оптимизация памяти: {start_mem:.2f} MB → {end_mem:.2f} MB (сэкономлено {100*(start_mem-end_mem)/start_mem:.1f}%)")
     return df
@@ -196,9 +192,7 @@ def generate_viz_recommendations(df):
         return response['choices'][0]['message']['content']
     except Exception as e:
         return f"Ошибка OpenAI API: {e}"
-
-# ... (все предыдущие импорты остаются без изменений)
-
+        
 # === UI ===
 st.sidebar.header("Загрузите файл с данными")
 uploaded_file = st.sidebar.file_uploader("CSV, Excel или JSON", type=["csv", "xlsx", "xls", "json"])
