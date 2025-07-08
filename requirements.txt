@@ -1,6 +1,8 @@
 streamlit
 pandas
+numpy
 plotly
 scikit-learn
 shap
+matplotlib
 joblib
