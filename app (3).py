@@ -212,86 +212,92 @@ def generate_shap_plot(model, X, feature_names):
     return plt.gcf()
 
 def generate_ai_report(df, model, problem_type, target, metrics):
-    """Генерация отчета с помощью локальной модели"""
-    generator = load_text_generation_model()
-    if not generator:
-        return "Не удалось загрузить модель для генерации отчета"
-    
+    """Генерация структурированного отчета с улучшенным промптом"""
     prompt = f"""
-Задача: Подготовь журналистский отчет на основе анализа данных.
+Ты - опытный журналист-аналитик. Напиши четкий отчет по следующим данным:
 
-Контекст:
-- Анализируемые данные: {df.shape[0]} строк, {df.shape[1]} колонок
+ДАННЫЕ:
+- Размер: {df.shape[0]} строк, {df.shape[1]} колонок
 - Целевая переменная: {target}
-- Тип задачи: {'Классификация' if problem_type == 'classification' else 'Регрессия'}
-- Метрики модели: {json.dumps(metrics, indent=2)}
+- Тип анализа: {'Классификация' if problem_type == 'classification' else 'Регрессия'}
+- Метрики: {json.dumps(metrics, indent=2)}
 
-Инструкции:
-1. Объясни простым языком, что делает модель
-2. Выдели ключевые инсайты
-3. Предложи как использовать результаты в статье
-4. Укажи ограничения анализа
-5. Дай рекомендации по дальнейшему исследованию
+СОЗДАЙ ОТЧЕТ ПО СХЕМЕ:
+1. [Краткий вывод] Основной инсайт в одном предложении
+2. [Что найдено] Конкретные обнаруженные закономерности
+3. [Как использовать] Практическое применение для журналистики
+4. [Ограничения] Что нужно учитывать при интерпретации
+5. [Что дальше] Рекомендации по дальнейшему анализу
 
-Требования:
-- Пиши кратко, понятно, без технического жаргона
+ТРЕБОВАНИЯ:
+- Только факты, без воды
+- Максимум 5 предложений в каждом пункте
 - Используй маркированные списки
-- Будь точным и информативным
-
-Отчет:
+- Пиши простым языком
 """
+    
     try:
+        generator = load_text_generation_model()
+        if not generator:
+            return "Ошибка: модель не загружена"
+        
         report = generator(
             prompt,
             max_length=1500,
-            num_return_sequences=1,
-            temperature=0.7,
+            temperature=0.5,  # Уменьшаем "креативность"
             top_p=0.9,
-            do_sample=True,
-            pad_token_id=50256,
+            repetition_penalty=1.2,
             no_repeat_ngram_size=3
         )
         
-        generated_text = report[0]['generated_text']
-        generated_text = generated_text.replace(prompt, "").strip()
-        return generated_text
+        text = report[0]['generated_text'].replace(prompt, "").strip()
+        return postprocess_report(text)
     except Exception as e:
-        return f"Ошибка генерации отчета: {str(e)}"
+        return f"Ошибка генерации: {str(e)}"
 
-def generate_flourish_recommendations(df, target):
-    """Генерация рекомендаций по визуализациям"""
-    generator = load_text_generation_model()
-    if not generator:
-        return "Не удалось загрузить модель для генерации рекомендаций"
+def postprocess_report(text):
+    """Очистка и форматирование отчета"""
+    # Удаляем технические артефакты
+    for artifact in ["<|endoftext|>", "Рисунок", "PyCharm", "Namespace"]:
+        text = text.replace(artifact, "")
     
+    # Разбиваем на пункты
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    return "\n\n".join(lines)
+    
+def generate_flourish_recommendations(df, target):
     prompt = f"""
-На основе данных с колонками: {list(df.columns)} и целевой переменной '{target}', 
-предложи 3 оптимальных типа визуализаций для Flourish. Для каждого укажи:
+Данные содержат колонки: {list(df.columns)}
+Целевой показатель: {target}
 
-1. Тип визуализации
-2. Какие колонки использовать
-3. Почему это будет эффективно
-4. Рекомендации по настройке во Flourish
+Сгенерируй 3 конкретных типа визуализации в формате:
+- **Тип**: [тип графика]
+  **Данные**: [какие колонки использовать]
+  **Почему**: [обоснование]
+  **Совет**: [как настроить во Flourish]
 
-Пример ответа:
-- **Тип**: Интерактивная карта
-  **Колонки**: Регион, {target}
-  **Обоснование**: Позволяет показать географическое распределение показателя
-  **Настройки**: Использовать российские регионы в формате GeoJSON
-
-Рекомендации:
+Пример:
+- **Тип**: Точечная диаграмма
+  **Данные**: Возраст, Доход
+  **Почему**: Покажет корреляцию между возрастом и доходом
+  **Совет**: Добавьте третий параметр (размер точек) по целевой переменной
 """
+    
     try:
-        recommendations = generator(
+        generator = load_text_generation_model()
+        if not generator:
+            return "Ошибка: модель не загружена"
+        
+        response = generator(
             prompt,
             max_length=1000,
-            temperature=0.7,
+            temperature=0.3,  # Минимум случайности
             top_p=0.9
         )
-        return recommendations[0]['generated_text'].replace(prompt, "").strip()
+        
+        return response[0]['generated_text'].replace(prompt, "").strip()
     except Exception as e:
-        return f"Ошибка генерации рекомендаций: {str(e)}"
-
+        return f"Ошибка генерации: {str(e)}"
 def cluster_data(df, n_clusters):
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
     
